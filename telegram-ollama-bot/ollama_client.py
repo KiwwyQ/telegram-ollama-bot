@@ -1,13 +1,20 @@
 """
 Ollama Cloud API client.
 
+Official docs:
+  * Overview : https://docs.ollama.com/cloud
+  * Chat API : https://docs.ollama.com/api/chat
+  * Web search: https://docs.ollama.com/capabilities/web-search
+  * API index : https://docs.ollama.com/llms.txt
+  * Keys      : https://ollama.com/settings/keys
+
 The client talks to https://ollama.com (configurable via OLLAMA_BASE_URL) using
 the user's personal API key in the `Authorization: Bearer <key>` header.
 
 Endpoints used:
-  * POST /api/chat       - chat completions (optionally streamed)
-  * POST /api/web_search - web search
-  * GET  /api/tags       - list available models (best effort)
+  * POST /api/chat         - chat completions (model, messages, stream, options)
+  * POST /api/web_search   - web search (query, max_results) -> {results:[...]}
+  * GET  /api/tags         - list available models (best effort, dynamic list)
 
 All methods raise typed exceptions (AuthError, RateLimitError, OllamaError) so
 the caller can present friendly, non-leaky messages to the user.
@@ -123,10 +130,14 @@ class OllamaClient:
         return "".join(pieces)
 
     # ------------------------------------------------------------- web search
-    async def web_search(self, api_key: str, query: str) -> str:
-        """Run a web search and return a normalized text block of results."""
+    async def web_search(self, api_key: str, query: str, max_results: int = 5) -> str:
+        """Run a web search and return a normalized text block of results.
+
+        Official request body: {"query": "...", "max_results": 5}  (max 10).
+        Official response: {"results": [{"title", "url", "content"}, ...]}.
+        """
         url = f"{self.config.OLLAMA_BASE_URL}/api/web_search"
-        payload = {"query": query}
+        payload = {"query": query, "max_results": min(max(1, max_results), 10)}
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 resp = await client.post(url, headers=self._headers(api_key), json=payload)
@@ -141,7 +152,11 @@ class OllamaClient:
 
     @staticmethod
     def _normalize_search(data: dict, query: str) -> str:
-        """Turn the (varied) web search response shape into plain text."""
+        """Turn the web search response into plain text.
+
+        Primary shape: {"results": [{"title","url","content"}]}. We also tolerate
+        small variations (data/hits/answer) defensively.
+        """
         items = data.get("results") or data.get("data") or data.get("hits") or []
         if not items and isinstance(data.get("answer"), str):
             return data["answer"]
@@ -152,7 +167,7 @@ class OllamaClient:
         for i, item in enumerate(items[:6], 1):
             if isinstance(item, dict):
                 title = item.get("title") or item.get("name") or ""
-                snippet = item.get("snippet") or item.get("description") or item.get("content") or ""
+                snippet = item.get("content") or item.get("snippet") or item.get("description") or ""
                 url = item.get("url") or item.get("link") or ""
                 line = f"{i}. {title}".strip()
                 if snippet:

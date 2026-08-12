@@ -216,10 +216,29 @@ async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     is_private = chat.type == "private"
 
-    buttons = []
-    models = ctx.config.FREE_MODELS
-    for m in models:
-        buttons.append([InlineKeyboardButton(m, callback_data=f"{_CB_MODEL}{m}")])
+    # List available free cloud models dynamically via /api/tags using the
+    # triggering user's key; fall back to the static catalogue if unavailable.
+    models: list = list(ctx.config.FREE_MODELS)
+    user_rec = await ctx.storage.get_user(user.id) or {}
+    api_key = user_rec.get("ollama_key")
+    if api_key:
+        try:
+            live = await ctx.ollama.list_models(api_key)
+            if live:
+                # Prefer live models but keep the curated order for familiar ones.
+                models = live
+        except Exception as exc:
+            ctx.logger.debug("dynamic model list failed: %s", type(exc).__name__)
+
+    if not models:
+        await safe_send(
+            context.bot, chat.id,
+            "No models available right now. Set your key with /setkey and try again, "
+            "or check https://ollama.com/settings/keys.", ctx,
+        )
+        return
+
+    buttons = [[InlineKeyboardButton(m, callback_data=f"{_CB_MODEL}{m}")] for m in models]
     markup = InlineKeyboardMarkup(buttons)
     scope = "this group" if not is_private else "you"
     await context.bot.send_message(
@@ -564,16 +583,20 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
     files = ctx.tools.FILE_RE.findall(reply_text)
     final_text = ctx.tools.strip_markers(reply_text)
 
-    for term in gifs[:3]:
-        term = term.strip()
-        gif_url = await ctx.tools.search_gif(term)
-        if gif_url:
-            try:
-                await bot.send_animation(chat.id, animation=gif_url, caption=None)
-            except Exception as exc:
-                ctx.logger.debug("send_animation failed: %s", type(exc).__name__)
-        else:
-            await safe_send(bot, chat.id, f"(Couldn't find a GIF for '{term}' right now.)", ctx)
+    if ctx.tools.gif_enabled:
+        for term in gifs[:3]:
+            term = term.strip()
+            gif_url = await ctx.tools.search_gif(term)
+            if gif_url:
+                try:
+                    await bot.send_animation(chat.id, animation=gif_url, caption=None)
+                except Exception as exc:
+                    ctx.logger.debug("send_animation failed: %s", type(exc).__name__)
+            else:
+                await safe_send(bot, chat.id, f"(Couldn't find a GIF for '{term}' right now.)", ctx)
+    else:
+        if gifs:
+            ctx.logger.debug("GIF requested but Klipy key not configured; skipping.")
 
     for fname, fcontent in files[:3]:
         try:

@@ -53,10 +53,14 @@ async def main() -> None:
     )
     register_handlers(app, ctx)
 
-    # Close the tools' HTTP client on shutdown.
+    # Close the tools' HTTP client and DB engine on shutdown.
     async def _shutdown() -> None:
         try:
             await tools._http.aclose()
+        except Exception:
+            pass
+        try:
+            await storage.close()
         except Exception:
             pass
 

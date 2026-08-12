@@ -31,6 +31,10 @@ class Tools:
         self.config = config
         self.logger = logger
         self._http = httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=10.0))
+        # Klipy GIF API: optional. Without a key the GIF tool is disabled so the
+        # bot never crashes. Get a free production key: https://klipy.com/docs
+        self.klipy_key = (config.KLIPY_API_KEY or "").strip()
+        self.gif_enabled = bool(self.klipy_key)
 
     # ----------------------------------------------------------- marker helpers
     @staticmethod
@@ -50,20 +54,25 @@ class Tools:
 
     # -------------------------------------------------------------------- GIF
     async def search_gif(self, query: str) -> str | None:
-        """Search a free GIF source and return a direct media URL, or None.
+        """Search Klipy for a GIF and return a direct media URL, or None.
 
-        Uses Klipy's free, key-less GIF search API. The exact response shape is
-        not guaranteed, so we defensively hunt for the first media URL in the
-        JSON payload.
+        Requires KLIPY_API_KEY (set in the environment). If the key is missing
+        the GIF tool is disabled and this returns None without erroring.
+
+        Endpoint pattern (Klipy):
+          GET https://api.klipy.com/api/v1/{API_KEY}/gifs/search?q=...
+        The exact JSON shape can vary, so we defensively hunt for the first
+        media URL in the response.
         """
+        if not self.gif_enabled:
+            return None
         try:
-            url = "https://api.klipy.com/api/v1/gif/search"
+            url = f"https://api.klipy.com/api/v1/{self.klipy_key}/gifs/search"
             resp = await self._http.get(url, params={"q": query, "limit": 8})
             if resp.status_code != 200:
                 return None
             data = resp.json()
-            media_url = self._first_media_url(data)
-            return media_url
+            return self._first_media_url(data)
         except Exception as exc:
             self.logger.debug("GIF search failed: %s", type(exc).__name__)
             return None

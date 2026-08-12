@@ -2,7 +2,7 @@
 #
 # This configures the bot as a *Background Worker* (recommended for free tier:
 # it runs continuously and is not subject to the 15-minute spin-down of free
-# Web Services). Only TELEGRAM_BOT_TOKEN is required.
+# Web Services). TELEGRAM_BOT_TOKEN and DATABASE_URL are required.
 
 services:
   - type: worker
@@ -13,6 +13,10 @@ services:
     plan: free
     envVars:
       - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: KLIPY_API_KEY
         sync: false
       - key: ADMIN_IDS
         sync: false
@@ -44,6 +48,8 @@ services:
 #     plan: free
 #     envVars:
 #       - key: TELEGRAM_BOT_TOKEN
+#         sync: false
+#       - key: DATABASE_URL
 #         sync: false
 #       - key: ENABLE_WEB_SERVER
 #         value: "true"

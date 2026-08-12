@@ -57,8 +57,15 @@ class Config:
     OLLAMA_BASE_URL: str = "https://ollama.com"
     FREE_MODELS: list = field(default_factory=list)
 
-    # Storage.
-    DB_PATH: str = "data/bot.db"
+    # Remote database (REQUIRED). SQLite is intentionally NOT used because the
+    # Render filesystem is ephemeral. Provide a full async SQLAlchemy URL, e.g.
+    #   MySQL:    mysql+aiomysql://user:pass@host:3306/dbname
+    #   Postgres: postgresql+asyncpg://user:pass@host:5432/dbname
+    DATABASE_URL: str = ""
+
+    # Klipy GIF API key (optional). Without it the GIF tool is disabled.
+    # Get a free production key at https://klipy.com/docs
+    KLIPY_API_KEY: str = ""
 
     # Keep-alive / web server (used only when deploying as a Web Service).
     ENABLE_WEB_SERVER: bool = False
@@ -85,7 +92,8 @@ class Config:
             DEFAULT_VISION_MODEL=os.environ.get("DEFAULT_VISION_MODEL", "llama3.2-vision"),
             OLLAMA_BASE_URL=os.environ.get("OLLAMA_BASE_URL", "https://ollama.com").rstrip("/"),
             FREE_MODELS=env_models or list(DEFAULT_FREE_MODELS),
-            DB_PATH=os.environ.get("DB_PATH", "data/bot.db"),
+            DATABASE_URL=os.environ.get("DATABASE_URL", ""),
+            KLIPY_API_KEY=os.environ.get("KLIPY_API_KEY", ""),
             ENABLE_WEB_SERVER=os.environ.get("ENABLE_WEB_SERVER", "false").lower() in ("1", "true", "yes"),
             PORT=int(os.environ.get("PORT", "8080")),
             MAX_MEMORY_MESSAGES=int(os.environ.get("MAX_MEMORY_MESSAGES", "40")),

@@ -37,7 +37,7 @@ telegram-ollama-bot/
 ├── bot.py              # Entry point: wires everything, runs polling
 ├── config.py           # Env-driven settings (no hardcoded secrets)
 ├── logging_config.py   # Structured logging, redacts secrets
-├── storage.py          # SQLite (aiosqlite): users, groups, memory, usage
+├── storage.py          # Remote DB (SQLAlchemy async: MySQL/Postgres): users, groups, memory, usage
 ├── ollama_client.py    # Ollama Cloud REST client (chat, search, streaming)
 ├── memory.py           # Conversation history + auto-summarization
 ├── tools.py            # Web search, GIF, file, vision image helpers
@@ -90,6 +90,25 @@ telegram-ollama-bot/
 
 ---
 
+## 🗄 2.5 Set up the remote database (required)
+
+This bot does **not** use SQLite. On Render the filesystem is ephemeral, so all
+data lives in a remote MySQL or PostgreSQL database.
+
+1. Create a free database:
+   - **MySQL:** [Aiven free tier](https://aiven.io), FreeSQLDatabase, or db4free.
+   - **Postgres:** [Neon](https://neon.tech) or [Supabase](https://supabase.com)
+     free tier (more reliable long-term than Render's 90-day free Postgres).
+2. Build the `DATABASE_URL`:
+   - MySQL:    `mysql+aiomysql://user:pass@host:3306/dbname`
+   - Postgres: `postgresql+asyncpg://user:pass@host:5432/dbname`
+3. Set `DATABASE_URL` as an environment variable. Tables are created
+   automatically on first launch.
+
+> Aiven MySQL requires SSL — append `?ssl=true` (or the provider's SSL query
+> params) to the URL. Neon/Supabase Postgres work out of the box with the
+> `postgresql+asyncpg://` scheme.
+
 ## 🚀 3. Deploy on Render.com (free tier)
 
 ### Option A — Background Worker (recommended)
@@ -102,7 +121,10 @@ free Web Services.
    - **Build Command:** `pip install -r requirements.txt`
    - **Start Command:** `python bot.py`
    - **Plan:** Free
-4. Add the environment variable **`TELEGRAM_BOT_TOKEN`** (paste your BotFather token).
+4. Add the environment variables:
+   - **`TELEGRAM_BOT_TOKEN`** (paste your BotFather token) — required.
+   - **`DATABASE_URL`** — required. A remote MySQL/Postgres URL (see "Database" below).
+   - **`KLIPY_API_KEY`** — optional (enables the GIF tool).
    You can leave everything else at defaults, or copy `render.yaml` and deploy via
    "Blueprint" for a one-click setup.
 5. Deploy. Logs should show `Logged in as @YourBot` and `Bot is running`.
@@ -114,10 +136,9 @@ free Web Services.
    every 5–10 minutes to keep it awake.
 3. The bot still uses long-polling (not webhooks) in this setup.
 
-> Note: Render's free disk is ephemeral between deploys, but **persists across
-> restarts of the same service instance**. Your SQLite DB (`data/bot.db`) survives
-> normal restarts. For durability across redeploys, mount a Render Disk at `data/`
-> or point `DB_PATH` at a persistent store.
+> **Database:** Render's filesystem is ephemeral, so this bot uses a **remote
+> database** (not SQLite). Set `DATABASE_URL` to a MySQL or PostgreSQL connection
+> string (see "Database setup" below). All keys, memory and settings live there.
 
 ---
 
@@ -146,7 +167,8 @@ to reveal these to the user):
 - **Web search** — model includes `[SEARCH: query]`; the bot fetches results and
   re-asks the model so it can answer with fresh information.
 - **GIF** — model includes `[GIF: term]`; the bot sends an animation as a separate
-  message (free Klipy API, no key required).
+  message via the **Klipy** API. Set `KLIPY_API_KEY` to enable it (free production
+  key at https://klipy.com/docs); without a key the GIF tool is disabled gracefully.
 - **File** — model wraps content in `[FILE:name.txt] ... [/FILE]`; the bot sends it
   as a downloadable document and removes the marker from the visible chat.
 
@@ -182,7 +204,8 @@ See `.env.example`. Highlights:
 | `DEFAULT_VISION_MODEL` | `llama3.2-vision` | Model for image understanding. |
 | `OLLAMA_BASE_URL` | `https://ollama.com` | Ollama Cloud base URL. |
 | `FREE_MODELS` | built-in list | Models shown by `/model`. |
-| `DB_PATH` | `data/bot.db` | SQLite location. |
+| `DATABASE_URL` | — | **Required.** Remote MySQL/Postgres URL (e.g. `mysql+aiomysql://...`). |
+| `KLIPY_API_KEY` | — | Optional. Enables the GIF tool (free key at https://klipy.com/docs). |
 | `ENABLE_WEB_SERVER` | `false` | Start `/health` endpoint. |
 | `PORT` | `8080` | Health server port. |
 | `MAX_MEMORY_MESSAGES` | `40` | Max retained messages before trimming. |
@@ -202,7 +225,8 @@ cp .env.example .env   # fill TELEGRAM_BOT_TOKEN
 python bot.py
 ```
 
-The bot connects with long-polling. SQLite is created automatically in `data/`.
+The bot connects with long-polling. Tables are created automatically in your
+remote database on first launch (set `DATABASE_URL`).
 
 ---
 
