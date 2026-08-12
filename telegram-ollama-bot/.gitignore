@@ -1,0 +1,8 @@
+# Never commit secrets or local data
+.env
+.env.*
+data/
+*.db
+__pycache__/
+.venv/
+*.pyc

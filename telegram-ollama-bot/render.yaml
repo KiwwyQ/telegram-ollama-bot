@@ -1,0 +1,53 @@
+# Render.com deployment manifest.
+#
+# This configures the bot as a *Background Worker* (recommended for free tier:
+# it runs continuously and is not subject to the 15-minute spin-down of free
+# Web Services). Only TELEGRAM_BOT_TOKEN is required.
+
+services:
+  - type: worker
+    name: ollama-telegram-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    plan: free
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: DEFAULT_MODEL
+        value: gpt-oss:20b
+      - key: DEFAULT_VISION_MODEL
+        value: llama3.2-vision
+      - key: OLLAMA_BASE_URL
+        value: https://ollama.com
+      - key: ENABLE_WEB_SERVER
+        value: "false"
+      - key: PORT
+        value: "8080"
+      - key: LOG_LEVEL
+        value: INFO
+
+# ---------------------------------------------------------------------------
+# Alternative: deploy as a *Web Service* (uncomment the block below and remove
+# the worker block above). Free web services sleep after 15 min of inactivity,
+# so you must also enable ENABLE_WEB_SERVER=true (starts a /health endpoint)
+# and ping it with a free uptime monitor (e.g. UptimeRobot) to stay awake.
+# ---------------------------------------------------------------------------
+# services:
+#   - type: web
+#     name: ollama-telegram-bot
+#     runtime: python
+#     buildCommand: pip install -r requirements.txt
+#     startCommand: python bot.py
+#     plan: free
+#     envVars:
+#       - key: TELEGRAM_BOT_TOKEN
+#         sync: false
+#       - key: ENABLE_WEB_SERVER
+#         value: "true"
+#       - key: PORT
+#         value: "8080"
+#       - key: DEFAULT_MODEL
+#         value: gpt-oss:20b
