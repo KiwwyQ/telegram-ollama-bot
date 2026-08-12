@@ -34,7 +34,7 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-from telegram.error import TelegramError
+from telegram.error import TelegramError, RetryAfter
 from telegram.constants import ParseMode
 
 from personality import build_system_prompt, DEFAULT_PERSONALITY, LANGUAGES
@@ -44,6 +44,10 @@ from ollama_client import AuthError, RateLimitError, OllamaError
 _RATE_LIMIT: dict[int, float] = {}
 
 # Callback data prefixes.
+
+# Telegram hard limits.
+MAX_MESSAGE_LEN = 4096
+MAX_CAPTION_LEN = 1024
 _CB_MODEL = "model:"
 _CB_LANG = "lang:"
 
@@ -79,39 +83,122 @@ def _fmt_setting(user: Optional[dict]) -> Optional[str]:
     return fmt if fmt in ("html", "markdown", "none") else "none"
 
 
+def split_text(text, limit=MAX_MESSAGE_LEN):
+    """Split text into chunks <= limit, preferring line/word boundaries.
+
+    Avoids cutting mid-word when possible; returns [text] if it already fits.
+    Used so replies never exceed Telegram's 4096-char message limit.
+    """
+    if not text:
+        return [""]
+    if len(text) <= limit:
+        return [text]
+    out = []
+    for para in text.split("\n"):
+        if len(para) <= limit:
+            if out and len(out[-1]) + len(para) + 1 <= limit:
+                out[-1] += "\n" + para
+            else:
+                out.append(para)
+            continue
+        cur = ""
+        for w in para.split(" "):
+            if len(w) > limit:
+                if cur:
+                    out.append(cur)
+                    cur = ""
+                out.extend(w[i:i + limit] for i in range(0, len(w), limit))
+                continue
+            sep = " " if cur else ""
+            if len(cur) + len(sep) + len(w) > limit:
+                out.append(cur)
+                cur = w
+            else:
+                cur = cur + sep + w
+        if cur:
+            out.append(cur)
+    res = []
+    for c in out:
+        if len(c) <= limit:
+            res.append(c)
+        else:
+            res.extend(c[i:i + limit] for i in range(0, len(c), limit))
+    return res
+
+
 async def safe_send(bot, chat_id: int, text: str, ctx: BotContext, parse_mode=None, **kw):
     text = text or "…"
-    if len(text) > 4000:
-        text = text[:3950] + "\n\n… (message truncated)"
-    try:
-        return await bot.send_message(
-            chat_id=chat_id, text=text, parse_mode=parse_mode,
-            disable_web_page_preview=True, **kw,
-        )
-    except TelegramError:
-        # Retry without formatting if the model produced invalid markup.
+    # Captions (photos/documents/GIFs) are limited to 1024 characters.
+    if kw.get("caption") and len(kw["caption"]) > MAX_CAPTION_LEN:
+        kw["caption"] = kw["caption"][:MAX_CAPTION_LEN]
+    if len(text) > MAX_MESSAGE_LEN:
+        # Too long: split into consecutive messages (plain text avoids broken
+        # markdown entities spanning chunks). Returns the last message sent.
+        last = None
+        for part in split_text(text, MAX_MESSAGE_LEN):
+            last = await _send_message(bot, chat_id, part, None, ctx, kw)
+        return last
+    return await _send_message(bot, chat_id, text, parse_mode, ctx, kw)
+
+
+async def _send_message(bot, chat_id, text, parse_mode, ctx, kw):
+    for _ in range(3):
         try:
-            return await bot.send_message(chat_id=chat_id, text=text[:3950], disable_web_page_preview=True, **kw)
-        except Exception:
+            return await bot.send_message(
+                chat_id=chat_id, text=text, parse_mode=parse_mode,
+                disable_web_page_preview=True, **kw,
+            )
+        except RetryAfter as e:
+            ctx.logger.warning("send rate-limited, sleeping %ss", e.retry_after)
+            await asyncio.sleep(max(1, int(e.retry_after)))
+        except TelegramError:
+            if parse_mode:
+                parse_mode = None
+                continue
             return None
+    return None
 
 
 async def safe_edit(bot, chat_id: int, message_id: int, text: str, ctx: BotContext, parse_mode=None):
     text = text or "…"
-    if len(text) > 4000:
-        text = text[:3950] + "\n\n… (message truncated)"
-    try:
-        await bot.edit_message_text(
-            text=text, chat_id=chat_id, message_id=message_id,
-            parse_mode=parse_mode, disable_web_page_preview=True,
-        )
-    except TelegramError:
+    # Edits share the 4096 limit; if exceeded, fall back to sending the (split)
+    # text as new messages instead of editing.
+    if len(text) > MAX_MESSAGE_LEN:
+        return await safe_send(bot, chat_id, text, ctx, parse_mode=None)
+    for _ in range(3):
         try:
             await bot.edit_message_text(
-                text=text, chat_id=chat_id, message_id=message_id, disable_web_page_preview=True,
+                text=text, chat_id=chat_id, message_id=message_id,
+                parse_mode=parse_mode, disable_web_page_preview=True,
             )
-        except Exception:
-            pass
+            return True
+        except RetryAfter as e:
+            ctx.logger.warning("edit rate-limited, sleeping %ss", e.retry_after)
+            await asyncio.sleep(max(1, int(e.retry_after)))
+        except TelegramError:
+            if parse_mode:
+                parse_mode = None
+                continue
+            return False
+    return False
+
+
+async def _deliver_final(bot, chat_id, status_id, text, ctx, parse_mode):
+    """Send the final answer: one clean edit, or split messages if too long."""
+    chunks = split_text(text or "", MAX_MESSAGE_LEN)
+    if len(chunks) == 1:
+        if status_id:
+            await safe_edit(bot, chat_id, status_id, chunks[0], ctx, parse_mode)
+        else:
+            await safe_send(bot, chat_id, chunks[0], ctx, parse_mode)
+        return
+    sent = False
+    if status_id:
+        sent = await safe_edit(bot, chat_id, status_id, chunks[0], ctx, parse_mode=None)
+    if not sent:
+        await safe_send(bot, chat_id, chunks[0], ctx, parse_mode=None)
+    for part in chunks[1:]:
+        await safe_send(bot, chat_id, part, ctx, parse_mode=None)
 
 
 def _parse_mode(fmt: str):
@@ -539,12 +626,9 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
     try:
         for attempt in range(4):
             if ctx.config.STREAM_RESPONSES:
-                reply_text = await _stream_and_edit(bot, chat.id, status_id, ctx, api_key, model, full, parse_mode)
+                reply_text = await _stream_and_edit(bot, chat.id, status_id, ctx, api_key, model, full, parse_mode, is_group=not is_private)
             else:
                 reply_text = await ctx.ollama.chat(api_key, model, full, stream=False)
-                display = ctx.tools.strip_markers(reply_text) or "🔎 searching…"
-                if status_id:
-                    await safe_edit(bot, chat.id, status_id, display, ctx, parse_mode)
             # Tool: web search.
             searches = ctx.tools.extract_search_queries(reply_text)
             if searches and attempt < 3:
@@ -578,7 +662,7 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
                               "⚠️ Unexpected error. Please try again later.")
         return
 
-    # ---- tools: GIF + FILE (post-process) ----
+        # ---- tools: GIF + FILE (post-process) ----
     gifs = ctx.tools.GIF_RE.findall(reply_text)
     files = ctx.tools.FILE_RE.findall(reply_text)
     final_text = ctx.tools.strip_markers(reply_text)
@@ -607,14 +691,14 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
 
     if not final_text and (gifs or files):
         final_text = "✅ Here you go!"
-    if final_text and status_id:
-        await safe_edit(bot, chat.id, status_id, final_text, ctx, parse_mode)
-    elif not final_text and status_id:
-        await safe_edit(bot, chat.id, status_id, "✅ Done.", ctx)
+
+    # Deliver the final answer (handles the 4096-char limit by splitting).
+    await _deliver_final(bot, chat.id, status_id, final_text, ctx, parse_mode)
 
     # ---- memory + usage ----
     await ctx.memory.add_message(chat.id, "user", ctx.tools.strip_markers(content))
     await ctx.memory.add_message(chat.id, "assistant", final_text)
+
     try:
         count = await ctx.storage.bump_usage(user.id)
         if count == 40 or count == 80:
@@ -625,6 +709,7 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
             )
     except Exception:
         pass
+
     # Summarize if needed (uses the triggering user's key).
     try:
         await ctx.memory.maybe_summarize(chat.id, api_key, model)
@@ -636,24 +721,27 @@ def message_photo(update):
     return update.effective_message.photo[-1]
 
 
-async def _stream_and_edit(bot, chat_id, status_id, ctx, api_key, model, full, parse_mode):
-    """Stream the reply and progressively edit the status message.
+async def _stream_and_edit(bot, chat_id, status_id, ctx, api_key, model, full, parse_mode, is_group):
+    """Stream the reply and do *sparse* progressive edits of the status message.
 
-    Internal tool markers are stripped from the displayed text so the user never
-    sees the raw `[SEARCH: ...]` protocol.
+    Edits are throttled (every ~2s in private, ~3s in groups, and only when a
+    meaningful chunk of new text has arrived) to avoid Telegram 429 limits.
+    Internal tool markers are stripped so the user never sees `[SEARCH: ...]`.
     """
     collected = []
     last_edit = 0.0
+    last_len = 0
+    interval = 3.0 if is_group else 2.0
+    min_delta = 200
     async for delta in ctx.ollama.stream_chat(api_key, model, full):
         collected.append(delta)
         now = time.time()
-        if now - last_edit > 1.2 and len(collected) > 1:
-            snippet = ctx.tools.strip_markers("".join(collected)) or "🔎 searching…"
+        snippet = ctx.tools.strip_markers("".join(collected)) or "… searching…"
+        if now - last_edit >= interval and len(snippet) - last_len >= min_delta:
             await safe_edit(bot, chat_id, status_id, snippet + " ✍️", ctx, parse_mode)
             last_edit = now
-    full_text = "".join(collected)
-    await safe_edit(bot, chat_id, status_id, ctx.tools.strip_markers(full_text) or "✍️", ctx, parse_mode)
-    return full_text
+            last_len = len(snippet)
+    return "".join(collected)
 
 
 async def _finalize_error(bot, chat_id, status_id, ctx, exc, parse_mode, message):
