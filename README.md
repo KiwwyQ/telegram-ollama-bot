@@ -158,6 +158,11 @@ free Web Services.
 | `/clear` or `/new` | anywhere | Clear this chat's memory. |
 | `/stats` | anywhere | Show current model, memory size estimate, key status. |
 
+> **Context-aware command menu:** the bot calls `setMyCommands` at startup with
+Telegram scopes. In **private chats** the menu includes `/setkey` and `/delkey`;
+in **groups** those are hidden (keys are personal and DM-only) and admins see
+the same reduced set. The `/` button therefore shows the right commands automatically.
+
 ---
 
 ## 🧰 Tools the bot uses

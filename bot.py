@@ -18,6 +18,7 @@ from memory import MemoryManager
 from tools import Tools
 from handlers import BotContext, register_handlers
 from keep_alive import start_health_server
+from commands import register_commands
 
 
 async def main() -> None:
@@ -36,7 +37,7 @@ async def main() -> None:
     memory = MemoryManager(storage, config, ollama, logger)
     tools = Tools(ollama, config, logger)
 
-    app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
+    app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(register_commands).build()
 
     # Resolve the bot username at runtime (used for mention detection).
     me = await app.bot.get_me()
