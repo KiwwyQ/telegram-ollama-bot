@@ -1,4 +1,4 @@
-# Requires Python 3.10–3.13 (PTB v21 is not compatible with Python 3.14).
+# Pin Python via .python-version (Render). PTB v21 is not compatible with Python 3.14.
 # Render default runtime may be 3.14; pin 3.12 via runtime.txt.
 python-telegram-bot>=21.0,<22
 httpx>=0.27.0
