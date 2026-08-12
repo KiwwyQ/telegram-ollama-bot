@@ -13,8 +13,8 @@ We delete existing commands per scope first (clean slate) then set the new ones.
 """
 import logging
 
-from telegram import BotCommand
-from telegram.constants import (
+from telegram import (
+    BotCommand,
     BotCommandScopeAllPrivateChats,
     BotCommandScopeAllGroupChats,
     BotCommandScopeAllChatAdministrators,
