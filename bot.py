@@ -74,7 +74,7 @@ async def main() -> None:
         await start_health_server(config, logger)
 
     logger.info("Bot is running. Press Ctrl+C to stop.")
-    await app.run_polling(close_loop=False, stop_signals=True)
+    await app.run_polling(drop_pending_updates=True, close_loop=False)
 
 
 if __name__ == "__main__":
