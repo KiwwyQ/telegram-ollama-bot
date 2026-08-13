@@ -103,9 +103,10 @@ class PythonEval:
         return env
 
     def _pip_install_cmd(self, pkg: str) -> list[str]:
-        if self._use_venv:
-            return [str(self.pip_bin), "install", "--disable-pip-version-check", pkg]
-        return [str(self.python_bin), "-m", "pip", "install", "--disable-pip-version-check", pkg]
+        base = [str(self.pip_bin), "install", "--disable-pip-version-check", "--no-cache-dir", pkg]
+        if not self._use_venv:
+            return [str(self.python_bin), "-m", "pip", "install", "--disable-pip-version-check", "--no-cache-dir", "--target", str(self._site_packages), pkg]
+        return base
 
     async def execute(self, user_id: int, code: str, install: Optional[list[str]] = None) -> dict:
         if self._install_lock:

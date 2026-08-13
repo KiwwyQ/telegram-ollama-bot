@@ -78,7 +78,7 @@ async def run_agent_loop(
             raise AgentError("Agent timed out.")
 
         # Show progress on the status message, throttled.
-        if status_id:
+        if status_id and step % 2 == 0:
             try:
                 await bot.edit_message_text(
                     text=f"🔄 Step {step + 1}/{max_steps}...",
@@ -158,7 +158,6 @@ async def run_agent_loop(
         for m in WS_DELETE_RE.finditer(reply):
             ws_ops.append(("delete", m.group(1).strip(), ""))
 
-        sandbox_allowed = sandbox_allowed
         if ws_ops and sandbox_allowed:
             for op, relpath, content in ws_ops:
                 try:
@@ -179,8 +178,9 @@ async def run_agent_loop(
                 tool_results.append("(Eval error: sandbox not allowed)")
                 continue
             try:
-                install = [pkg.strip() for pkg in __import__("tools").REQUIRE_RE.findall(code) if pkg.strip()]
-                cleaned = __import__("tools").REQUIRE_RE.sub("", code) if install else code
+                from tools import REQUIRE_RE
+                install = [pkg.strip() for pkg in REQUIRE_RE.findall(code) if pkg.strip()]
+                cleaned = REQUIRE_RE.sub("", code) if install else code
                 result = await ctx.tools.eval_tool.execute(user_id, cleaned, install=install)
                 lines = [f"Eval result (exit_code={result['exit_code']}, time={result['execution_time']}s):"]
                 if result["stdout"]:
@@ -218,16 +218,13 @@ async def run_agent_loop(
                 continue
             try:
                 file_input = await ctx.tools.send_file(user_id, relpath)
-                if isinstance(file_input, str):
-                    tool_results.append(file_input)
-                else:
-                    await bot.send_document(chat_id, document=file_input, caption=f"📄 {relpath}")
-                    tool_results.append(f"(Sent file: {relpath})")
+                await bot.send_document(chat_id, document=file_input, caption=f"📄 {relpath}")
+                tool_results.append(f"(Sent file: {relpath})")
             except Exception as exc:
                 tool_results.append(f"(Send file error: {type(exc).__name__})")
 
         if not tool_results:
-            return reply.strip()
+            return (ctx.tools.strip_markers(reply) if hasattr(ctx, "tools") else reply.strip())
 
         # Feed results back and continue.
         loop_messages.append({"role": "assistant", "content": reply})

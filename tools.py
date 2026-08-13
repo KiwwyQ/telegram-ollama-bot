@@ -214,25 +214,18 @@ class Tools:
             return f"(Skill error: {exc})"
         return f"[SKILL: {name}]\n{content}\n[/END SKILL]"
 
-    async def send_file(self, user_id: int, relpath: str, caption: str = "") -> str:
+    async def send_file(self, user_id: int, relpath: str) -> InputFile:
         if not self.workspace:
-            return "(Workspace is not configured.)"
-        try:
-            user_dir = self.workspace._user_dir(user_id)
-            target = self.workspace._safe_path(user_dir, relpath)
-            if not target.is_file():
-                return f"(File not found: {relpath})"
-            self.workspace._reject_symlinks(target)
-            size = target.stat().st_size
-            if size > self.workspace.max_file_size:
-                return f"(File too large: {size} bytes, limit is {self.workspace.max_file_size} bytes)"
-            from telegram import InputFile
-            doc = InputFile(open(target, "rb"), filename=target.name)
-            return doc
-        except WorkspaceError as exc:
-            return f"(Workspace error: {exc})"
-        except Exception as exc:
-            return f"(Send file error: {type(exc).__name__}: {exc})"
+            raise WorkspaceError("Workspace is not configured.")
+        user_dir = self.workspace._user_dir(user_id)
+        target = self.workspace._safe_path(user_dir, relpath)
+        if not target.is_file():
+            raise WorkspaceError(f"File not found: {relpath}")
+        self.workspace._reject_symlinks(target)
+        size = target.stat().st_size
+        if size > self.workspace.max_file_size:
+            raise WorkspaceError(f"File too large: {size} bytes, limit is {self.workspace.max_file_size} bytes")
+        return InputFile(open(target, "rb"), filename=target.name)
 
     # ------------------------------------------------------------------ image
     @staticmethod

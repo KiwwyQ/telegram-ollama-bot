@@ -82,6 +82,9 @@ def _read_html(path: Path) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
+MAX_DOCUMENT_CHARS = 12000
+
+
 def _read_docx(path: Path) -> str:
     try:
         from docx import Document
@@ -98,7 +101,8 @@ def _read_docx(path: Path) -> str:
             cells = [cell.text.strip() for cell in row.cells]
             parts.append(" | ".join(cells))
         parts.append("[/TABLE]")
-    return "\n".join(parts)
+    text = "\n".join(parts)
+    return _truncate(text)
 
 
 def _read_pdf(path: Path) -> str:
@@ -112,7 +116,32 @@ def _read_pdf(path: Path) -> str:
         text = page.extract_text()
         if text:
             parts.append(f"--- Page {i + 1} ---\n{text.strip()}")
-    return "\n\n".join(parts)
+    text = "\n\n".join(parts)
+    return _truncate(text)
+
+
+def _read_pptx(path: Path) -> str:
+    try:
+        from pptx import Presentation
+    except ImportError as exc:
+        raise DocumentError("python-pptx is not installed. Use '# REQUIRE: python-pptx'.") from exc
+    prs = Presentation(str(path))
+    parts = []
+    for i, slide in enumerate(prs.slides):
+        texts = []
+        for shape in slide.shapes:
+            if hasattr(shape, "text") and shape.text.strip():
+                texts.append(shape.text.strip())
+        if texts:
+            parts.append(f"--- Slide {i + 1} ---\n" + "\n".join(texts))
+    text = "\n\n".join(parts)
+    return _truncate(text)
+
+
+def _truncate(text: str) -> str:
+    if len(text) > MAX_DOCUMENT_CHARS:
+        return text[:MAX_DOCUMENT_CHARS] + f"\n\n... (truncated at {MAX_DOCUMENT_CHARS} chars)"
+    return text
 
 
 def _read_xlsx(path: Path) -> str:
@@ -131,7 +160,7 @@ def _read_xlsx(path: Path) -> str:
         if len(rows) > 200:
             parts.append(f"... ({len(rows)} rows total, truncated)")
     wb.close()
-    return "\n".join(parts)
+    return _truncate("\n".join(parts))
 
 
 def _read_pptx(path: Path) -> str:
@@ -148,7 +177,8 @@ def _read_pptx(path: Path) -> str:
                 texts.append(shape.text.strip())
         if texts:
             parts.append(f"--- Slide {i + 1} ---\n" + "\n".join(texts))
-    return "\n\n".join(parts)
+    text = "\n\n".join(parts)
+    return _truncate(text)
 
 
 def _read_zip(path: Path) -> str:
