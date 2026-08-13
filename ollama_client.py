@@ -55,6 +55,22 @@ class OllamaClient:
             "Content-Type": "application/json",
         }
 
+    def _log_api_error(self, model, resp, exc):
+        status = getattr(resp, "status_code", "n/a") if resp is not None else "n/a"
+        body = ""
+        if resp is not None:
+            try:
+                body = (resp.text or "")[:500]
+            except Exception:
+                body = "<unreadable>"
+        self.logger.warning(
+            "Ollama API error | model=%s | status=%s | exc=%s | body=%s",
+            model,
+            status,
+            type(exc).__name__,
+            body,
+        )
+
     def _check_status(self, resp: httpx.Response) -> None:
         if resp.status_code == 401:
             raise AuthError("Your Ollama key is invalid or missing.")
@@ -85,13 +101,15 @@ class OllamaClient:
             "stream": False,
             "options": {"temperature": 0.7, "top_p": 0.9},
         }
+        resp = None
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 resp = await client.post(url, headers=self._headers(api_key), json=payload)
                 self._check_status(resp)
                 data = resp.json()
                 return data.get("message", {}).get("content", "")
-        except (httpx.HTTPError, OllamaError):
+        except (httpx.HTTPError, OllamaError) as exc:
+            self._log_api_error(model, resp, exc)
             raise
         except Exception as exc:  # pragma: no cover - defensive
             raise OllamaError("Unexpected error while contacting Ollama.") from exc
@@ -109,6 +127,7 @@ class OllamaClient:
             "stream": True,
             "options": {"temperature": 0.7, "top_p": 0.9},
         }
+        resp = None
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 async with client.stream("POST", url, headers=self._headers(api_key), json=payload) as resp:
@@ -128,6 +147,7 @@ class OllamaClient:
                             if chunk.get("done"):
                                 break
         except Exception as exc:
+            self._log_api_error(model, resp, exc)
             self.logger.debug("streaming failed (%s); falling back to non-stream", type(exc).__name__)
             yield await self.chat(api_key, model, messages, stream=False)
 
@@ -147,13 +167,15 @@ class OllamaClient:
         """
         url = f"{self.config.OLLAMA_BASE_URL}/api/web_search"
         payload = {"query": query, "max_results": min(max(1, max_results), 10)}
+        resp = None
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 resp = await client.post(url, headers=self._headers(api_key), json=payload)
                 self._check_status(resp)
                 data = resp.json()
                 return self._normalize_search(data, query)
-        except (httpx.HTTPError, OllamaError):
+        except (httpx.HTTPError, OllamaError) as exc:
+            self._log_api_error(query, resp, exc)
             raise
         except Exception:
             # Never leak internals; return a generic failure string the bot can show.
@@ -192,6 +214,7 @@ class OllamaClient:
     async def list_models(self, api_key: str) -> list:
         """Best-effort model listing. Returns [] on any failure."""
         url = f"{self.config.OLLAMA_BASE_URL}/api/tags"
+        resp = None
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 resp = await client.get(url, headers=self._headers(api_key))
@@ -200,5 +223,5 @@ class OllamaClient:
                 models = data.get("models") or []
                 return [m.get("name") for m in models if isinstance(m, dict) and m.get("name")]
         except Exception as exc:
-            self.logger.debug("list_models failed: %s", type(exc).__name__)
+            self._log_api_error("(list_models)", resp, exc)
             return []

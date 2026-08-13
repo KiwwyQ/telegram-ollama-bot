@@ -602,7 +602,7 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
             if not ctx.config.is_vision_model(model):
                 model = ctx.config.DEFAULT_VISION_MODEL
         except Exception as exc:
-            ctx.logger.warning("image processing failed: %s", type(exc).__name__)
+            ctx.logger.warning("image processing failed | model=%s | exc=%s", model, type(exc).__name__)
             images_b64 = None
 
     # If the user sent an image but we couldn't process it, abort generation
@@ -656,31 +656,36 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
                         full.append({"role": "user", "content": f"[Web search results for '{q}']:\n{res}"})
                     except (RateLimitError, AuthError, OllamaError) as e:
                         # Surface limit errors immediately and stop.
-                        await _finalize_error(bot, chat.id, status_id, ctx, e, parse_mode)
+                        await _finalize_error(bot, chat.id, status_id, ctx, e, parse_mode, model=model)
                         return
                 continue  # re-ask model with search results
             break
     except RateLimitError:
         await _finalize_error(bot, chat.id, status_id, ctx, None, parse_mode,
                               "🚫 Your free Ollama daily limit has been reached. "
-                              "It usually resets ~24h after your first request today (or at midnight UTC).")
+                              "It usually resets ~24h after your first request today (or at midnight UTC).",
+                              model=model)
         return
     except AuthError:
         await _finalize_error(bot, chat.id, status_id, ctx, None, parse_mode,
-                              "🔑 Your Ollama key appears invalid. Re-set it with /setkey in a private chat.")
+                              "🔑 Your Ollama key appears invalid. Re-set it with /setkey in a private chat.",
+                              model=model)
         return
     except ModelNotFoundError:
         await _finalize_error(bot, chat.id, status_id, ctx, None, parse_mode,
-                              "⚠️ The selected vision model isn't available. Use /model to pick a different one.")
+                              "⚠️ The selected vision model isn't available. Use /model to pick a different one.",
+                              model=model)
         return
     except OllamaError as e:
         await _finalize_error(bot, chat.id, status_id, ctx, e, parse_mode,
-                              "⚠️ Something went wrong talking to Ollama. Please try again in a moment.")
+                              "⚠️ Something went wrong talking to Ollama. Please try again in a moment.",
+                              model=model)
         return
     except Exception as exc:
         ctx.logger.exception("generation error")
         await _finalize_error(bot, chat.id, status_id, ctx, exc, parse_mode,
-                              "⚠️ Unexpected error. Please try again later.")
+                              "⚠️ Unexpected error. Please try again later.",
+                              model=model)
         return
 
         # ---- tools: GIF + FILE (post-process) ----
@@ -781,9 +786,9 @@ async def _stream_and_edit(bot, chat_id, status_id, ctx, api_key, model, full, p
     return "".join(collected)
 
 
-async def _finalize_error(bot, chat_id, status_id, ctx, exc, parse_mode, message):
+async def _finalize_error(bot, chat_id, status_id, ctx, exc, parse_mode, message, model=None):
     if exc is not None:
-        ctx.logger.warning("finalize error: %s", type(exc).__name__)
+        ctx.logger.warning("finalize error | model=%s | exc=%s", model, type(exc).__name__)
     if status_id:
         try:
             await bot.edit_message_text(text=message, chat_id=chat_id, message_id=status_id,
