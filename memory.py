@@ -21,11 +21,13 @@ class MemoryManager:
         self.ollama = ollama
         self.logger = logger
 
-    async def add_message(self, chat_id: int, role: str, content: str, images=None) -> list:
+    async def add_message(self, chat_id: int, role: str, content: str, images=None, name=None) -> list:
         messages = await self.storage.get_memory(chat_id)
         entry = {"role": role, "content": content}
         if images:
             entry["images"] = images
+        if role == "user" and name:
+            entry["name"] = name
         messages.append(entry)
         if len(messages) > self.config.MAX_MEMORY_MESSAGES:
             # Keep the most recent messages; oldest are summarized beforehand.
@@ -51,7 +53,15 @@ class MemoryManager:
         if not to_summarize:
             return
 
-        convo = "\n\n".join(f"{m['role']}: {m.get('content', '')}" for m in to_summarize)
+        convo_parts = []
+        for m in to_summarize:
+            role = m.get('role', 'user')
+            content = m.get('content', '')
+            if role == 'user':
+                n = m.get('name') or 'User'
+                content = f'[{n}]: {content}'
+            convo_parts.append(f'{role}: {content}')
+        convo = "\n\n".join(convo_parts)
         summary_messages = [
             {
                 "role": "system",

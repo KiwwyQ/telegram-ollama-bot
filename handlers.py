@@ -44,6 +44,25 @@ from tools import GIF_RE, FILE_RE, SEARCH_RE
 # user_id -> last request timestamp (process-local abuse throttle).
 _RATE_LIMIT: dict[int, float] = {}
 
+
+def _display_name(user) -> str:
+    if getattr(user, "username", None):
+        return user.username
+    parts = [getattr(user, "first_name", ""), getattr(user, "last_name", "")]
+    name = " ".join(p for p in parts if p).strip()
+    return name or str(getattr(user, "id", "User"))
+
+
+def _prefix_user_message(msg: dict, default_name: str = "User") -> dict:
+    if msg.get("role") != "user":
+        return msg
+    name = msg.get("name") or default_name
+    content = msg.get("content", "")
+    out = {"role": "user", "content": f"[{name}]: {content}"}
+    if "images" in msg:
+        out["images"] = msg["images"]
+    return out
+
 # Callback data prefixes.
 
 # Telegram hard limits.
@@ -618,7 +637,8 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
     # Build the new user message content (with replied context).
     content = text
     if replied_human_text:
-        content = f"(Replying to: {replied_human_text})\n\n{content}"
+        ruser_name = _display_name(ruser) if ruser else "User"
+        content = f"(Replying to {ruser_name}: {replied_human_text})\n\n{content}"
     if has_photo and not content:
         content = "What is in this image?"
 
@@ -635,8 +655,12 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
 
     # Load memory (history).
     history = await ctx.memory.get_messages(chat.id)
+    # Prefix user messages with author names for model context.
+    formatted_history = [_prefix_user_message(m) for m in history]
+    display_name = _display_name(user)
+    formatted_new = _prefix_user_message(new_user_msg, display_name)
     # Build full message list (exclude prior system summaries' duplication is fine).
-    full = [{"role": "system", "content": system_prompt}] + list(history) + [new_user_msg]
+    full = [{"role": "system", "content": system_prompt}] + formatted_history + [formatted_new]
 
     # ---- generation with tool loop ----
     reply_text = ""
@@ -732,7 +756,7 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
             pass
 
     # ---- memory + usage ----
-    await ctx.memory.add_message(chat.id, "user", ctx.tools.strip_markers(content))
+    await ctx.memory.add_message(chat.id, "user", ctx.tools.strip_markers(content), name=display_name)
     await ctx.memory.add_message(chat.id, "assistant", final_text)
 
     try:
