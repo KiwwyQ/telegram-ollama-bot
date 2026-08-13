@@ -41,10 +41,13 @@ AGENT_INSTRUCTION = (
     "\nAgent mode: when a request requires multiple tool actions, you may use several "
     "tool markers in sequence across multiple turns. The bot will execute each action, "
     "show you the result, and let you continue. Do not expose internal reasoning or "
-    "planning to the user. Keep plans concise and action-oriented. "
+    "planning to the user. Start by outlining a brief plan using [PLAN]...[/PLAN]. "
+    "Then execute step by step. Keep plans concise and action-oriented. "
     "Provide brief, user-friendly status descriptions so the bot can show progress. "
-    "If you cannot complete a task, explain why clearly and concisely. "
-    "Never claim success without verifying the result."
+    "If you cannot complete a task, explain why clearly and concisely without "
+    "mentioning backend systems, servers, or internal errors. "
+    "Never claim success without verifying the result. "
+    "When finished, include [DONE] on its own line."
 )
 
 LANGUAGES = {

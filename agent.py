@@ -36,6 +36,7 @@ EVAL_RE = re.compile(r"\[EVAL\](.*?)\[/EVAL\]", re.IGNORECASE | re.DOTALL)
 SKILL_RE = re.compile(r"\[SKILL:([^\]]+)\]", re.IGNORECASE)
 SEND_FILE_RE = re.compile(r"\[SEND_FILE:([^\]]+)\]", re.IGNORECASE)
 DONE_RE = re.compile(r"\[DONE\]", re.IGNORECASE)
+PLAN_RE = re.compile(r"\[PLAN\](.*?)\[/PLAN\]", re.IGNORECASE | re.DOTALL)
 
 
 class AgentError(Exception):
@@ -95,7 +96,7 @@ async def run_agent_loop(
     for step in range(max_steps):
         if time.perf_counter() - start > timeout:
             logger.warning("agent timeout | user=%s step=%s elapsed=%s", user_id, step, time.perf_counter() - start)
-            return "I'm sorry, I couldn't finish that task in time. Please try again with a simpler request."
+            return "I'm sorry, I ran out of time before finishing. Please try a simpler request, or break it into smaller steps."
 
         # Show progress on the status message.
         if status_id:
@@ -124,7 +125,25 @@ async def run_agent_loop(
         has_tools = any(regex.findall(reply) for regex in (
             SEARCH_RE, GIF_RE, FILE_RE, WS_LIST_RE, WS_READ_RE, WS_WRITE_RE,
             WS_DELETE_RE, EVAL_RE, SKILL_RE, SEND_FILE_RE,
-        )) and not DONE_RE.search(reply)
+        )) and not DONE_RE.search(reply) and not PLAN_RE.search(reply)
+
+        # Handle explicit plan marker: show plan, then continue
+        plan_match = PLAN_RE.search(reply)
+        if plan_match and not has_tools:
+            plan_text = plan_match.group(1).strip()
+            if status_id and plan_text:
+                try:
+                    await bot.edit_message_text(
+                        text=f"📋 Plan:\n{plan_text[:900]}",
+                        chat_id=chat_id,
+                        message_id=status_id,
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    pass
+            loop_messages.append({"role": "assistant", "content": reply})
+            loop_messages.append({"role": "user", "content": "Proceed with the plan. Execute the next step and show results."})
+            continue
 
         if not has_tools or DONE_RE.search(reply):
             logger.info("agent loop complete | user=%s steps=%s elapsed=%s", user_id, step + 1, time.perf_counter() - start)
@@ -141,7 +160,7 @@ async def run_agent_loop(
                 res = await ctx.tools.do_web_search(api_key, q)
                 tool_results.append(f"[Web search results for '{q}']:\n{res}")
             except Exception as exc:
-                tool_results.append(f"(Web search error: {type(exc).__name__})")
+                tool_results.append("(Web search error: The search service is temporarily unavailable. I'll continue without it.)")
 
         # GIFs.
         for term in GIF_RE.findall(reply)[:3]:
@@ -160,7 +179,7 @@ async def run_agent_loop(
                 else:
                     tool_results.append(f"(GIF not found: {term})")
             except Exception as exc:
-                tool_results.append(f"(GIF error: {type(exc).__name__})")
+                tool_results.append("(GIF error: Couldn't fetch a GIF right now. I'll continue without it.)")
 
         # Files.
         for fname, fcontent in FILE_RE.findall(reply)[:3]:
@@ -169,7 +188,7 @@ async def run_agent_loop(
                 await bot.send_document(chat_id, document=doc)
                 tool_results.append(f"(Sent file: {fname.strip()})")
             except Exception as exc:
-                tool_results.append(f"(File error: {type(exc).__name__})")
+                tool_results.append("(File error: Couldn't send the file. I'll continue without it.)")
 
         # Workspace.
         ws_ops = []
@@ -217,7 +236,15 @@ async def run_agent_loop(
                     lines.append("(Execution failed)")
                 tool_results.append("\n".join(lines))
             except Exception as exc:
-                tool_results.append(f"(Eval error: {type(exc).__name__}: {exc}. Try checking the Python environment or simplifying the code.)")
+                msg = str(exc)
+                if "pip install" in msg.lower() or "install" in msg.lower():
+                    tool_results.append("(Eval error: A required Python library could not be installed. This is usually temporary — please try again in a moment.)")
+                elif "timeout" in msg.lower():
+                    tool_results.append("(Eval error: The Python code took too long to run. Please try a simpler request.)")
+                elif "permission" in msg.lower() or "denied" in msg.lower():
+                    tool_results.append("(Eval error: Permission denied while accessing a file or directory.)")
+                else:
+                    tool_results.append("(Eval error: The Python environment encountered an issue. Please try again.)")
 
         # Skills.
         for skill_name in SKILL_RE.findall(reply)[:3]:
@@ -245,7 +272,7 @@ async def run_agent_loop(
                 await bot.send_document(chat_id, document=file_input, caption=f"📄 {relpath}")
                 tool_results.append(f"(Sent file: {relpath})")
             except Exception as exc:
-                tool_results.append(f"(Send file error: {type(exc).__name__})")
+                tool_results.append("(Send file error: Couldn't send the file. Please check the filename and try again.)")
 
         if not tool_results:
             return (ctx.tools.strip_markers(reply) if hasattr(ctx, "tools") else reply.strip())
@@ -255,4 +282,4 @@ async def run_agent_loop(
         loop_messages.append({"role": "user", "content": "\n\n".join(tool_results)})
 
     logger.warning("agent max steps reached | user=%s max_steps=%s elapsed=%s", user_id, max_steps, time.perf_counter() - start)
-    return "I'm sorry, I couldn't complete this task. It may be too complex or I'm restricted from accessing the necessary tools. Please try a simpler request."
+    return "I'm sorry, I couldn't finish this task within the allowed steps. Please try a simpler request, or ask for help with one part at a time."
