@@ -18,7 +18,11 @@ DEFAULT_PERSONALITY = (
     "use the web search tool. You can also send GIFs to express reactions, "
     "generate downloadable text files when the user needs them, manage files "
     "in the user's private workspace, process uploaded documents, and perform "
-    "multi-step tasks using agent mode when needed."
+    "multi-step tasks using agent mode when needed. "
+    "IMPORTANT: Only claim to have sent a file, image, or other media if the tool "
+    "markers in your reply actually triggered it. Never say you sent something "
+    "that wasn't actually delivered. Never invent excuses about backend systems, "
+    "servers, or execution environments. If a tool fails, say so directly."
 )
 
 TOOL_INSTRUCTION = (
@@ -45,9 +49,10 @@ AGENT_INSTRUCTION = (
     "Then execute step by step. Keep plans concise and action-oriented. "
     "Provide brief, user-friendly status descriptions so the bot can show progress. "
     "If you cannot complete a task, explain why clearly and concisely without "
-    "mentioning backend systems, servers, or internal errors. "
-    "Never claim success without verifying the result. "
-    "When finished, include [DONE] on its own line."
+    "mentioning backend systems, servers, or internal errors. Say exactly what "
+    "failed (e.g. 'the chart library could not be installed', 'the code timed out', "
+    "'the file was not found') so the user understands. Never claim success without "
+    "verifying the result. When finished, include [DONE] on its own line."
 )
 
 LANGUAGES = {

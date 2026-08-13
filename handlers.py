@@ -788,8 +788,11 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
                 timeout=float(ctx.config.AGENT_MODE_TIMEOUT),
             )
         except AgentError as exc:
+            user_msg = str(exc) if exc else "The agent could not complete the task."
+            if not user_msg.startswith("⚠️"):
+                user_msg = f"⚠️ {user_msg}"
             await _finalize_error(bot, chat.id, status_id, ctx, exc, parse_mode,
-                                  f"⚠️ Agent stopped: {exc}", model=model)
+                                  user_msg, model=model)
             return
         except Exception as exc:
             ctx.logger.exception("agent error")
