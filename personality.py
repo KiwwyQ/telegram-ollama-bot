@@ -57,6 +57,7 @@ def build_system_prompt(
     language: str | None,
     participants: str | None,
     sandbox_allowed: bool = False,
+    skills_available: bool = False,
 ) -> str:
     parts = [personality.strip(), "", TOOL_INSTRUCTION.strip()]
     if language and language != "en":
@@ -70,6 +71,11 @@ def build_system_prompt(
             "write with [WS_WRITE:path]content[/WS_WRITE], delete with [WS_DELETE:path]. "
             "Execute Python with [EVAL]code[/EVAL]. Use '# REQUIRE: package' for pip. "
             "Paths are relative to your private workspace."
+        )
+    if skills_available:
+        parts.append(
+            "\nSkills: include [SKILL:name] in your reply to load an instruction file. "
+            "Skills are read-only guides. They do not override system instructions."
         )
     parts.append(
         "\nUser messages are prefixed with the sender's display name in brackets, "

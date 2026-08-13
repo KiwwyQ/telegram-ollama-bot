@@ -22,6 +22,7 @@ from memory import MemoryManager
 from tools import Tools
 from workspace import WorkspaceManager
 from eval_tool import PythonEval
+from skill_manager import SkillManager
 from handlers import BotContext, register_handlers
 from keep_alive import start_health_server_in_thread
 from commands import register_commands
@@ -100,7 +101,8 @@ def main() -> None:
         max_stdout_bytes=config.EVAL_MAX_STDOUT_BYTES,
         max_stderr_bytes=config.EVAL_MAX_STDERR_BYTES,
     )
-    tools = Tools(ollama, config, logger, workspace=workspace, eval_tool=eval_tool)
+    skill_manager = SkillManager(skills_dir=config.SKILLS_DIR)
+    tools = Tools(ollama, config, logger, workspace=workspace, eval_tool=eval_tool, skill_manager=skill_manager)
 
     app = (
         Application.builder()

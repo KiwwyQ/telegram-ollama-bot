@@ -39,7 +39,7 @@ from telegram.constants import ParseMode
 
 from personality import build_system_prompt, DEFAULT_PERSONALITY, LANGUAGES
 from ollama_client import AuthError, RateLimitError, ModelNotFoundError, OllamaError
-from tools import GIF_RE, FILE_RE, SEARCH_RE, WS_LIST_RE, WS_READ_RE, WS_WRITE_RE, WS_DELETE_RE, EVAL_RE
+from tools import GIF_RE, FILE_RE, SEARCH_RE, WS_LIST_RE, WS_READ_RE, WS_WRITE_RE, WS_DELETE_RE, EVAL_RE, SKILL_RE
 
 # user_id -> last request timestamp (process-local abuse throttle).
 _RATE_LIMIT: dict[int, float] = {}
@@ -666,8 +666,9 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
         participants = f"{user.first_name} (@{user.username or user.id})"
 
     sandbox_allowed = ctx.config.is_sandbox_allowed(user.id, chat.id)
+    skills_available = bool(ctx.tools.skill_manager and ctx.tools.skill_manager.list_skills())
 
-    system_prompt = build_system_prompt(personality, language, participants, sandbox_allowed=sandbox_allowed)
+    system_prompt = build_system_prompt(personality, language, participants, sandbox_allowed=sandbox_allowed, skills_available=skills_available)
 
     # Load memory (history).
     history = await ctx.memory.get_messages(chat.id)
@@ -796,7 +797,30 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
     for res in eval_results:
         await safe_send(bot, chat.id, res, ctx)
 
-    if not final_text and (gifs or files or ws_ops or eval_results):
+    # ---- skills (post-process) ----
+    skill_results = []
+    for m in SKILL_RE.finditer(reply_text):
+        skill_name = m.group(1).strip()
+        if not skill_name:
+            continue
+        try:
+            skill_content = await ctx.tools.read_skill(skill_name)
+        except Exception as exc:
+            skill_content = f"(Skill error: {type(exc).__name__})"
+        if skill_content.startswith("(Skill error:") or skill_content.startswith("(Skills are not configured.)"):
+            skill_results.append(skill_content)
+        else:
+            skill_results.append(skill_name)
+            raw = ctx.tools.skill_manager.read_skill(skill_name)
+            await ctx.memory.add_message(chat.id, "system", f"[SKILL: {skill_name}]\n{raw}\n[/END SKILL]")
+
+    for res in skill_results:
+        if not res.startswith("(Skill error:"):
+            await safe_send(bot, chat.id, f"✅ Loaded skill: {res}", ctx)
+        else:
+            await safe_send(bot, chat.id, res, ctx)
+
+    if not final_text and (gifs or files or ws_ops or eval_results or skill_results):
         final_text = "✅ Here you go!"
 
     # If the reply was purely tool-based (no text left after stripping markers),

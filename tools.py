@@ -30,6 +30,7 @@ from telegram import InputFile
 from config import Config
 from workspace import WorkspaceManager, WorkspaceError
 from eval_tool import PythonEval, EvalError
+from skill_manager import SkillManager, SkillError
 
 GIF_RE = re.compile(r"\[GIF:(.*?)\]", re.IGNORECASE)
 FILE_RE = re.compile(r"\[FILE:([^\]]+)\](.*?)\[/FILE\]", re.IGNORECASE | re.DOTALL)
@@ -40,10 +41,11 @@ WS_WRITE_RE = re.compile(r"\[WS_WRITE:([^\]]+)\](.*?)\[/WS_WRITE\]", re.IGNORECA
 WS_DELETE_RE = re.compile(r"\[WS_DELETE:([^\]]+)\]", re.IGNORECASE)
 EVAL_RE = re.compile(r"\[EVAL\](.*?)\[/EVAL\]", re.IGNORECASE | re.DOTALL)
 REQUIRE_RE = re.compile(r"^\s*#\s*REQUIRE:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+SKILL_RE = re.compile(r"\[SKILL:([^\]]+)\]", re.IGNORECASE)
 
 
 class Tools:
-    def __init__(self, ollama, config: Config, logger, workspace: Optional[WorkspaceManager] = None, eval_tool: Optional[PythonEval] = None):
+    def __init__(self, ollama, config: Config, logger, workspace: Optional[WorkspaceManager] = None, eval_tool: Optional[PythonEval] = None, skill_manager: Optional[SkillManager] = None):
         self.ollama = ollama
         self.config = config
         self.logger = logger
@@ -54,6 +56,7 @@ class Tools:
         self.gif_enabled = bool(self.klipy_key)
         self.workspace = workspace
         self.eval_tool = eval_tool
+        self.skill_manager = skill_manager
 
     # ----------------------------------------------------------- marker helpers
     @staticmethod
@@ -70,6 +73,7 @@ class Tools:
         text = WS_WRITE_RE.sub("", text)
         text = WS_DELETE_RE.sub("", text)
         text = EVAL_RE.sub("", text)
+        text = SKILL_RE.sub("", text)
         return text.strip()
 
     # --------------------------------------------------------------- web search
@@ -197,6 +201,16 @@ class Tools:
         if not result["success"]:
             lines.append("(Execution failed)")
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------- skills
+    async def read_skill(self, name: str) -> str:
+        if not self.skill_manager:
+            return "(Skills are not configured.)"
+        try:
+            content = self.skill_manager.read_skill(name)
+        except SkillError as exc:
+            return f"(Skill error: {exc})"
+        return f"[SKILL: {name}]\n{content}\n[/END SKILL]"
 
     # ------------------------------------------------------------------ image
     @staticmethod

@@ -94,6 +94,9 @@ class Config:
     EVAL_MAX_STDOUT_BYTES: int = 256 * 1024
     EVAL_MAX_STDERR_BYTES: int = 256 * 1024
 
+    # Skills (read-only instruction files).
+    SKILLS_DIR: str = "skills"
+
     # Sandbox control: "true" = everyone allowed; comma-separated IDs = specific
     # user IDs / group IDs allowed; empty/false = no one may use eval/workspace tools.
     SANDBOX_ALLOW: str = ""
