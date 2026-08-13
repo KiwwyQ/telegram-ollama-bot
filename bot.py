@@ -51,6 +51,7 @@ async def _post_init(application: Application) -> None:
         ollama=ollama,
         memory=memory,
         tools=tools,
+        workspace=workspace,
         logger=logger,
     )
     register_handlers(application, ctx)

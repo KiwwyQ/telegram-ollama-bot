@@ -40,6 +40,7 @@ from telegram.constants import ParseMode
 from personality import build_system_prompt, DEFAULT_PERSONALITY, LANGUAGES
 from ollama_client import AuthError, RateLimitError, ModelNotFoundError, OllamaError
 from tools import GIF_RE, FILE_RE, SEARCH_RE, WS_LIST_RE, WS_READ_RE, WS_WRITE_RE, WS_DELETE_RE, EVAL_RE, SKILL_RE
+from document_processor import extract_text, is_supported_document, _sanitize_filename, DocumentError
 
 # user_id -> last request timestamp (process-local abuse throttle).
 _RATE_LIMIT: dict[int, float] = {}
@@ -81,6 +82,7 @@ class BotContext:
     ollama: object
     memory: object
     tools: object
+    workspace: object
     logger: object
     config_obj: object = field(default=None, repr=False)
 
@@ -531,6 +533,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not has_photo and message.document and message.document.mime_type and message.document.mime_type.startswith("image/"):
         has_photo = True
 
+    # Detect non-image documents.
+    has_document = False
+    document_text = ""
+    document_filename = ""
+    if not has_photo and message.document:
+        mime = (message.document.mime_type or "").lower()
+        fname = (message.document.file_name or "").lower()
+        if is_supported_document(mime, fname):
+            has_document = True
+            document_filename = _sanitize_filename(message.document.file_name or "document")
+
     # Ignore pure commands here (CommandHandler handles them).
     if text.startswith("/"):
         return
@@ -593,10 +606,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Serialize generation per chat (the per-chat queue).
     lock = context.chat_data.setdefault("gen_lock", asyncio.Lock())
     async with lock:
-        await _generate(update, context, ctx, text, has_photo, replied_human_text, api_key, user_rec)
+        # Download supported documents to the user's workspace before generation.
+        if has_document and not document_text and message.document:
+            try:
+                f = await context.bot.get_file(message.document.file_id)
+                data = await f.download_as_bytearray()
+                if data:
+                    user_dir = ctx.workspace._user_dir(user.id)
+                    safe_name = _sanitize_filename(message.document.file_name or "document")
+                    dest = user_dir / safe_name
+                    dest.write_bytes(data)
+                    try:
+                        document_text = extract_text(dest, message.document.mime_type or "")
+                    except DocumentError as exc:
+                        document_text = f"(Document error: {exc})"
+            except Exception as exc:
+                document_text = f"(Document error: {type(exc).__name__})"
+        await _generate(update, context, ctx, text, has_photo, replied_human_text, api_key, user_rec, has_document=has_document, document_text=document_text, document_filename=document_filename)
 
 
-async def _generate(update, context, ctx, text, has_photo, replied_human_text, api_key, user_rec):
+async def _generate(update, context, ctx, text, has_photo, replied_human_text, api_key, user_rec, has_document=False, document_text="", document_filename=""):
     chat = update.effective_chat
     user = update.effective_user
     is_private = chat.type == "private"
@@ -655,6 +684,11 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
         content = f"(Replying to {ruser_name}: {replied_human_text})\n\n{content}"
     if has_photo and not content:
         content = "What is in this image?"
+    if has_document and document_text:
+        if document_text.startswith("(Document error:"):
+            content = f"(Document: {document_filename})\n{document_text}\n\n{content}" if content else f"(Document: {document_filename})\n{document_text}"
+        else:
+            content = f"(Document: {document_filename})\n{document_text}\n\n{content}" if content else f"(Document: {document_filename})\n{document_text}"
 
     new_user_msg = {"role": "user", "content": content, "name": display_name}
     if images_b64:
