@@ -39,6 +39,7 @@ from telegram.constants import ParseMode
 
 from personality import build_system_prompt, DEFAULT_PERSONALITY, LANGUAGES
 from ollama_client import AuthError, RateLimitError, OllamaError
+from tools import GIF_RE, FILE_RE, SEARCH_RE
 
 # user_id -> last request timestamp (process-local abuse throttle).
 _RATE_LIMIT: dict[int, float] = {}
@@ -663,8 +664,8 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
         return
 
         # ---- tools: GIF + FILE (post-process) ----
-    gifs = ctx.tools.GIF_RE.findall(reply_text)
-    files = ctx.tools.FILE_RE.findall(reply_text)
+    gifs = GIF_RE.findall(reply_text)
+    files = FILE_RE.findall(reply_text)
     final_text = ctx.tools.strip_markers(reply_text)
 
     if ctx.tools.gif_enabled:
