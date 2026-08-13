@@ -693,8 +693,18 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
     if not final_text and (gifs or files):
         final_text = "✅ Here you go!"
 
-    # Deliver the final answer (handles the 4096-char limit by splitting).
-    await _deliver_final(bot, chat.id, status_id, final_text, ctx, parse_mode)
+    # If the reply was purely tool-based (no text left after stripping markers),
+    # avoid sending an empty "…" placeholder. Just keep the side-effects (GIFs/files)
+    # and mark the status as done.
+    if final_text and final_text.strip():
+        await _deliver_final(bot, chat.id, status_id, final_text, ctx, parse_mode)
+    elif status_id:
+        try:
+            await bot.edit_message_text(
+                text="✅", chat_id=chat.id, message_id=status_id, disable_web_page_preview=True
+            )
+        except Exception:
+            pass
 
     # ---- memory + usage ----
     await ctx.memory.add_message(chat.id, "user", ctx.tools.strip_markers(content))
