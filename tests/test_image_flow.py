@@ -40,6 +40,15 @@ class VisionModelSelectionTests(unittest.TestCase):
         self.assertTrue(cfg.is_vision_model("gemma3:27b"))
         self.assertTrue(cfg.is_vision_model("gemma3"))
 
+    def test_gemma4_detected(self):
+        cfg = Config()
+        self.assertTrue(cfg.is_vision_model("gemma4:31b"))
+        self.assertTrue(cfg.is_vision_model("gemma4"))
+
+    def test_default_vision_model(self):
+        cfg = Config()
+        self.assertEqual(cfg.DEFAULT_VISION_MODEL, "gemma4:31b")
+
     def test_known_vision_models(self):
         cfg = Config()
         for m in ("llava", "llama3.2-vision", "moondream", "minicpm", "qwen2-vl"):
