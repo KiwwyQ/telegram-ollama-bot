@@ -53,7 +53,7 @@ class Config:
 
     # Model configuration.
     DEFAULT_MODEL: str = "gpt-oss:20b"
-    DEFAULT_VISION_MODEL: str = "gemma3:27b"
+    DEFAULT_VISION_MODEL: str = "gemma4:31b"
     OLLAMA_BASE_URL: str = "https://ollama.com"
     FREE_MODELS: list = field(default_factory=list)
 
