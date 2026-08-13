@@ -42,6 +42,7 @@ WS_DELETE_RE = re.compile(r"\[WS_DELETE:([^\]]+)\]", re.IGNORECASE)
 EVAL_RE = re.compile(r"\[EVAL\](.*?)\[/EVAL\]", re.IGNORECASE | re.DOTALL)
 REQUIRE_RE = re.compile(r"^\s*#\s*REQUIRE:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 SKILL_RE = re.compile(r"\[SKILL:([^\]]+)\]", re.IGNORECASE)
+SEND_FILE_RE = re.compile(r"\[SEND_FILE:([^\]]+)\]", re.IGNORECASE)
 
 
 class Tools:
@@ -74,6 +75,7 @@ class Tools:
         text = WS_DELETE_RE.sub("", text)
         text = EVAL_RE.sub("", text)
         text = SKILL_RE.sub("", text)
+        text = SEND_FILE_RE.sub("", text)
         return text.strip()
 
     # --------------------------------------------------------------- web search
@@ -211,6 +213,26 @@ class Tools:
         except SkillError as exc:
             return f"(Skill error: {exc})"
         return f"[SKILL: {name}]\n{content}\n[/END SKILL]"
+
+    async def send_file(self, user_id: int, relpath: str, caption: str = "") -> str:
+        if not self.workspace:
+            return "(Workspace is not configured.)"
+        try:
+            user_dir = self.workspace._user_dir(user_id)
+            target = self.workspace._safe_path(user_dir, relpath)
+            if not target.is_file():
+                return f"(File not found: {relpath})"
+            self.workspace._reject_symlinks(target)
+            size = target.stat().st_size
+            if size > self.workspace.max_file_size:
+                return f"(File too large: {size} bytes, limit is {self.workspace.max_file_size} bytes)"
+            from telegram import InputFile
+            doc = InputFile(open(target, "rb"), filename=target.name)
+            return doc
+        except WorkspaceError as exc:
+            return f"(Workspace error: {exc})"
+        except Exception as exc:
+            return f"(Send file error: {type(exc).__name__}: {exc})"
 
     # ------------------------------------------------------------------ image
     @staticmethod

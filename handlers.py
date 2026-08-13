@@ -39,7 +39,7 @@ from telegram.constants import ParseMode
 
 from personality import build_system_prompt, DEFAULT_PERSONALITY, LANGUAGES
 from ollama_client import AuthError, RateLimitError, ModelNotFoundError, OllamaError
-from tools import GIF_RE, FILE_RE, SEARCH_RE, WS_LIST_RE, WS_READ_RE, WS_WRITE_RE, WS_DELETE_RE, EVAL_RE, SKILL_RE
+from tools import GIF_RE, FILE_RE, SEARCH_RE, WS_LIST_RE, WS_READ_RE, WS_WRITE_RE, WS_DELETE_RE, EVAL_RE, SKILL_RE, SEND_FILE_RE
 from document_processor import extract_text, is_supported_document, _sanitize_filename, DocumentError
 
 # user_id -> last request timestamp (process-local abuse throttle).
@@ -854,7 +854,31 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
         else:
             await safe_send(bot, chat.id, res, ctx)
 
-    if not final_text and (gifs or files or ws_ops or eval_results or skill_results):
+    # ---- file output (post-process) ----
+    send_file_ops = []
+    for m in SEND_FILE_RE.finditer(reply_text):
+        relpath = m.group(1).strip()
+        if relpath:
+            send_file_ops.append(relpath)
+
+    for relpath in send_file_ops:
+        try:
+            if status_id:
+                await safe_edit(bot, chat.id, status_id, "🔍 Checking result...", ctx, parse_mode)
+            file_input = await ctx.tools.send_file(user.id, relpath)
+            if isinstance(file_input, str):
+                await safe_send(bot, chat.id, file_input, ctx)
+            elif status_id:
+                await safe_edit(bot, chat.id, status_id, "📤 Sending file...", ctx, parse_mode)
+                await bot.send_document(chat.id, document=file_input, caption=f"📄 {relpath}")
+            else:
+                await bot.send_document(chat.id, document=file_input, caption=f"📄 {relpath}")
+            if status_id:
+                await safe_edit(bot, chat.id, status_id, "✅ Done", ctx, parse_mode)
+        except Exception as exc:
+            await safe_send(bot, chat.id, f"(Send file error: {type(exc).__name__})", ctx)
+
+    if not final_text and (gifs or files or ws_ops or eval_results or skill_results or send_file_ops):
         final_text = "✅ Here you go!"
 
     # If the reply was purely tool-based (no text left after stripping markers),
