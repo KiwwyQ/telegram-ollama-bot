@@ -495,6 +495,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = (message.text or message.caption or "").strip()
     has_photo = bool(message.photo)
+    if not has_photo and message.document and message.document.mime_type and message.document.mime_type.startswith("image/"):
+        has_photo = True
 
     # Ignore pure commands here (CommandHandler handles them).
     if text.startswith("/"):
@@ -589,8 +591,8 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
     images_b64 = None
     if has_photo:
         try:
-            photo = message_photo(update)
-            f = await bot.get_file(photo.file_id)
+            file_id = message_image_file(update)
+            f = await bot.get_file(file_id)
             data = await f.download_as_bytearray()
             if not data:
                 raise ValueError("empty image data")
@@ -603,6 +605,8 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
             ctx.logger.warning("image processing failed: %s", type(exc).__name__)
             images_b64 = None
 
+    # If the user sent an image but we couldn't process it, abort generation
+    # instead of silently sending a text-only request.
     if has_photo and images_b64 is None:
         await safe_send(
             bot, chat.id,
@@ -744,8 +748,14 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
         ctx.logger.debug("summarize skipped: %s", type(exc).__name__)
 
 
-def message_photo(update):
-    return update.effective_message.photo[-1]
+def message_image_file(update):
+    """Return the best image file_id from a photo array or an image document."""
+    message = update.effective_message
+    if message.photo:
+        return message.photo[-1].file_id
+    if message.document and message.document.mime_type and message.document.mime_type.startswith("image/"):
+        return message.document.file_id
+    raise ValueError("no image file available")
 
 
 async def _stream_and_edit(bot, chat_id, status_id, ctx, api_key, model, full, parse_mode, is_group):
