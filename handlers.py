@@ -797,7 +797,9 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
                                   "⚠️ Agent error. Please try again later.", model=model)
             return
 
-    if not agent_mode_used:
+    if agent_mode_used:
+        final_text = ctx.tools.strip_markers(reply_text)
+    else:
         # ---- tools: GIF + FILE (post-process) ----
         gifs = GIF_RE.findall(reply_text)
         files = FILE_RE.findall(reply_text)
