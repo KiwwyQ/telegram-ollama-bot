@@ -89,7 +89,7 @@ class Config:
             TELEGRAM_BOT_TOKEN=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
             ADMIN_IDS=_parse_int_set(os.environ.get("ADMIN_IDS", "")),
             DEFAULT_MODEL=os.environ.get("DEFAULT_MODEL", "gpt-oss:20b"),
-            DEFAULT_VISION_MODEL=os.environ.get("DEFAULT_VISION_MODEL", "gemma3:27b"),
+            DEFAULT_VISION_MODEL=os.environ.get("DEFAULT_VISION_MODEL", "gemma4:31b"),
             OLLAMA_BASE_URL=os.environ.get("OLLAMA_BASE_URL", "https://ollama.com").rstrip("/"),
             FREE_MODELS=env_models or list(DEFAULT_FREE_MODELS),
             DATABASE_URL=os.environ.get("DATABASE_URL", ""),
@@ -106,5 +106,5 @@ class Config:
     def is_vision_model(self, model: str) -> bool:
         """Heuristic to detect whether a model name supports image input."""
         lowered = (model or "").lower()
-        markers = ("vision", "llava", "moondream", "minicpm", "qwen-vl", "qwen2-vl", "pixtral", "gemma3")
+        markers = ("vision", "llava", "moondream", "minicpm", "qwen-vl", "qwen2-vl", "pixtral", "gemma3", "gemma4")
         return any(m in lowered for m in markers)
