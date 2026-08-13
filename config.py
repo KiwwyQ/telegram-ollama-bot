@@ -99,7 +99,7 @@ class Config:
 
     # Agent mode (lightweight multi-step tool loop).
     AGENT_MODE_MAX_STEPS: int = 5
-    AGENT_MODE_TIMEOUT: int = 120
+    AGENT_MODE_TIMEOUT: int = 300
 
     # Sandbox control: "true" = everyone allowed; comma-separated IDs = specific
     # user IDs / group IDs allowed; empty/false = no one may use eval/workspace tools.
@@ -153,12 +153,12 @@ class Config:
             WORKSPACE_MAX_WORKSPACE_SIZE=int(os.environ.get("WORKSPACE_MAX_WORKSPACE_SIZE", str(100 * 1024 * 1024))),
             WORKSPACE_MAX_FILES=int(os.environ.get("WORKSPACE_MAX_FILES", "1000")),
             EVAL_ENV_DIR=os.environ.get("EVAL_ENV_DIR", "eval_env"),
-            EVAL_TIMEOUT=int(os.environ.get("EVAL_TIMEOUT", "30")),
+            EVAL_TIMEOUT=int(os.environ.get("EVAL_TIMEOUT", "20")),
             EVAL_MAX_STDOUT_BYTES=int(os.environ.get("EVAL_MAX_STDOUT_BYTES", str(256 * 1024))),
             EVAL_MAX_STDERR_BYTES=int(os.environ.get("EVAL_MAX_STDERR_BYTES", str(256 * 1024))),
             SANDBOX_ALLOW=os.environ.get("SANDBOX_ALLOW", ""),
             AGENT_MODE_MAX_STEPS=int(os.environ.get("AGENT_MODE_MAX_STEPS", "5")),
-            AGENT_MODE_TIMEOUT=int(os.environ.get("AGENT_MODE_TIMEOUT", "120")),
+            AGENT_MODE_TIMEOUT=int(os.environ.get("AGENT_MODE_TIMEOUT", "300")),
         )
 
     def is_vision_model(self, model: str) -> bool:

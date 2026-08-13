@@ -18,9 +18,12 @@ No new infrastructure is introduced.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 from typing import Optional
+
+logger = logging.getLogger("agent")
 
 GIF_RE = re.compile(r"\[GIF:(.*?)\]", re.IGNORECASE)
 FILE_RE = re.compile(r"\[FILE:([^\]]+)\](.*?)\[/FILE\]", re.IGNORECASE | re.DOTALL)
@@ -72,13 +75,15 @@ async def run_agent_loop(
     """
     loop_messages = list(messages)
     start = time.perf_counter()
+    logger.info("agent loop start | user=%s chat=%s model=%s max_steps=%s timeout=%s", user_id, chat_id, model, max_steps, timeout)
 
     for step in range(max_steps):
         if time.perf_counter() - start > timeout:
+            logger.warning("agent timeout | user=%s step=%s elapsed=%s", user_id, step, time.perf_counter() - start)
             raise AgentError("Agent timed out.")
 
-        # Show progress on the status message, throttled.
-        if status_id and step % 2 == 0:
+        # Show progress on the status message.
+        if status_id:
             try:
                 await bot.edit_message_text(
                     text=f"🔄 Step {step + 1}/{max_steps}...",
@@ -93,6 +98,7 @@ async def run_agent_loop(
         try:
             reply = await ctx.ollama.chat(api_key, model, loop_messages, stream=False)
         except Exception as exc:
+            logger.error("agent generation failed | user=%s step=%s exc=%s", user_id, step, type(exc).__name__)
             raise AgentError(f"Generation failed: {type(exc).__name__}") from exc
 
         if not reply:
@@ -105,6 +111,7 @@ async def run_agent_loop(
         ))
 
         if not has_tools:
+            logger.info("agent loop complete | user=%s steps=%s elapsed=%s", user_id, step + 1, time.perf_counter() - start)
             return reply.strip()
 
         # Execute tools and append results.
@@ -230,4 +237,5 @@ async def run_agent_loop(
         loop_messages.append({"role": "assistant", "content": reply})
         loop_messages.append({"role": "user", "content": "\n\n".join(tool_results)})
 
+    logger.warning("agent max steps reached | user=%s max_steps=%s elapsed=%s", user_id, max_steps, time.perf_counter() - start)
     return "(Agent stopped: max steps reached.)"

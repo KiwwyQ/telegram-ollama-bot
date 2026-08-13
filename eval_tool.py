@@ -39,7 +39,7 @@ class PythonEval:
         self,
         workspace: "WorkspaceManager",
         env_dir: str = "eval_env",
-        timeout: int = 30,
+        timeout: int = 20,
         max_stdout_bytes: int = 256 * 1024,
         max_stderr_bytes: int = 256 * 1024,
     ) -> None:
