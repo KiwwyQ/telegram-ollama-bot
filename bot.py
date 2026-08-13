@@ -36,6 +36,7 @@ async def _post_init(application: Application) -> None:
     ollama = application.bot_data["ollama"]
     memory = application.bot_data["memory"]
     tools = application.bot_data["tools"]
+    workspace = application.bot_data["workspace"]
 
     # Resolve the bot username at runtime (used for mention detection).
     me = await application.bot.get_me()
@@ -119,6 +120,7 @@ def main() -> None:
         ollama=ollama,
         memory=memory,
         tools=tools,
+        workspace=workspace,
     )
 
     # Optional keep-alive health endpoint (Web Service mode). Runs in its own
