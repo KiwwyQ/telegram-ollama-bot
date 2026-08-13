@@ -41,6 +41,20 @@ class AgentError(Exception):
     """Raised when the agent loop cannot continue."""
 
 
+def _extract_progress_description(reply: str) -> str:
+    lines = (reply or "").strip().splitlines()
+    for line in lines[:5]:
+        text = line.strip()
+        if not text:
+            continue
+        if text.startswith("[") or text.startswith("```"):
+            continue
+        if len(text) > 80:
+            text = text[:77] + "..."
+        return text
+    return "Working..."
+
+
 async def run_agent_loop(
     ctx,
     user_id: int,
@@ -80,13 +94,14 @@ async def run_agent_loop(
     for step in range(max_steps):
         if time.perf_counter() - start > timeout:
             logger.warning("agent timeout | user=%s step=%s elapsed=%s", user_id, step, time.perf_counter() - start)
-            raise AgentError("Agent timed out.")
+            return "I'm sorry, I couldn't finish that task in time. Please try again with a simpler request."
 
         # Show progress on the status message.
         if status_id:
             try:
+                desc = _extract_progress_description(reply) if step > 0 else "Starting..."
                 await bot.edit_message_text(
-                    text=f"🔄 Step {step + 1}/{max_steps}...",
+                    text=f"🔄 Step {step + 1}/{max_steps} - {desc}",
                     chat_id=chat_id,
                     message_id=status_id,
                     disable_web_page_preview=True,
@@ -238,4 +253,4 @@ async def run_agent_loop(
         loop_messages.append({"role": "user", "content": "\n\n".join(tool_results)})
 
     logger.warning("agent max steps reached | user=%s max_steps=%s elapsed=%s", user_id, max_steps, time.perf_counter() - start)
-    return "(Agent stopped: max steps reached.)"
+    return "I'm sorry, I couldn't complete this task. It may be too complex or I'm restricted from accessing the necessary tools. Please try a simpler request."

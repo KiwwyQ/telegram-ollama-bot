@@ -35,7 +35,7 @@ class AgentLoopTests(unittest.TestCase):
         result = asyncio.get_event_loop().run_until_complete(
             run_agent_loop(ctx, 1, 1, MagicMock(), "key", "model", messages, None, None, max_steps=2)
         )
-        self.assertIn("max steps reached", result)
+        self.assertIn("couldn't complete this task", result)
         self.assertEqual(ctx.ollama.chat.call_count, 2)
 
     def test_tool_results_fed_back(self):
@@ -77,10 +77,10 @@ class AgentLoopTests(unittest.TestCase):
         ctx.ollama.chat = slow_chat
         messages = [{"role": "user", "content": "Search"}]
 
-        with self.assertRaises(AgentError):
-            asyncio.get_event_loop().run_until_complete(
-                run_agent_loop(ctx, 1, 1, MagicMock(), "key", "model", messages, None, None, timeout=0.05)
-            )
+        result = asyncio.get_event_loop().run_until_complete(
+            run_agent_loop(ctx, 1, 1, MagicMock(), "key", "model", messages, None, None, timeout=0.05)
+        )
+        self.assertIn("couldn't finish that task in time", result)
 
 
 if __name__ == "__main__":
