@@ -15,10 +15,12 @@ def _display_name(user) -> str:
     return name or str(getattr(user, "id", "User"))
 
 
-def _prefix_user_message(msg: dict, default_name: str = "User") -> dict:
+def _prefix_user_message(msg: dict) -> dict:
     if msg.get("role") != "user":
         return msg
-    name = msg.get("name") or default_name
+    name = msg.get("name")
+    if not name:
+        return msg
     content = msg.get("content", "")
     out = {"role": "user", "content": f"[{name}]: {content}"}
     if "images" in msg:
@@ -54,28 +56,28 @@ class DisplayNameTests(unittest.TestCase):
 
 class PrefixUserMessageTests(unittest.TestCase):
     def test_user_message_prefixed(self):
-        msg = {"role": "user", "content": "hello"}
-        out = _prefix_user_message(msg, "Fox")
+        msg = {"role": "user", "content": "hello", "name": "Fox"}
+        out = _prefix_user_message(msg)
         self.assertEqual(out, {"role": "user", "content": "[Fox]: hello"})
 
     def test_assistant_message_unchanged(self):
         msg = {"role": "assistant", "content": "hi"}
-        out = _prefix_user_message(msg, "Fox")
+        out = _prefix_user_message(msg)
         self.assertEqual(out, msg)
 
     def test_user_message_with_name_field(self):
         msg = {"role": "user", "content": "hi", "name": "Alex"}
-        out = _prefix_user_message(msg, "Fox")
+        out = _prefix_user_message(msg)
         self.assertEqual(out["content"], "[Alex]: hi")
 
-    def test_user_message_missing_name_uses_default(self):
+    def test_user_message_missing_name_unchanged(self):
         msg = {"role": "user", "content": "hi"}
         out = _prefix_user_message(msg)
-        self.assertEqual(out["content"], "[User]: hi")
+        self.assertEqual(out, msg)
 
     def test_user_message_with_images_preserved(self):
-        msg = {"role": "user", "content": "look", "images": ["abc"]}
-        out = _prefix_user_message(msg, "Fox")
+        msg = {"role": "user", "content": "look", "images": ["abc"], "name": "Fox"}
+        out = _prefix_user_message(msg)
         self.assertEqual(out["content"], "[Fox]: look")
         self.assertEqual(out["images"], ["abc"])
 
@@ -101,10 +103,11 @@ class PrefixUserMessageTests(unittest.TestCase):
         self.assertEqual(out[1]["content"], "[Alex]: b")
         self.assertEqual(out[2]["content"], "[Jordan]: c")
 
-    def test_old_message_without_name_uses_default(self):
+    def test_old_message_without_name_unchanged(self):
+        # Backward compatibility: messages without a name field are returned as-is.
         msg = {"role": "user", "content": "old message"}
-        out = _prefix_user_message(msg, "Fox")
-        self.assertEqual(out["content"], "[Fox]: old message")
+        out = _prefix_user_message(msg)
+        self.assertEqual(out, msg)
 
 
 class SystemPromptAttributionTests(unittest.TestCase):

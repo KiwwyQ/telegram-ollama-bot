@@ -53,10 +53,12 @@ def _display_name(user) -> str:
     return name or str(getattr(user, "id", "User"))
 
 
-def _prefix_user_message(msg: dict, default_name: str = "User") -> dict:
+def _prefix_user_message(msg: dict) -> dict:
     if msg.get("role") != "user":
         return msg
-    name = msg.get("name") or default_name
+    name = msg.get("name")
+    if not name:
+        return msg
     content = msg.get("content", "")
     out = {"role": "user", "content": f"[{name}]: {content}"}
     if "images" in msg:
@@ -642,7 +644,7 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
     if has_photo and not content:
         content = "What is in this image?"
 
-    new_user_msg = {"role": "user", "content": content}
+    new_user_msg = {"role": "user", "content": content, "name": display_name}
     if images_b64:
         new_user_msg["images"] = images_b64
 
@@ -658,7 +660,7 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
     # Prefix user messages with author names for model context.
     formatted_history = [_prefix_user_message(m) for m in history]
     display_name = _display_name(user)
-    formatted_new = _prefix_user_message(new_user_msg, display_name)
+    formatted_new = _prefix_user_message(new_user_msg)
     # Build full message list (exclude prior system summaries' duplication is fine).
     full = [{"role": "system", "content": system_prompt}] + formatted_history + [formatted_new]
 
