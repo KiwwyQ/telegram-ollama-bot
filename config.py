@@ -94,6 +94,34 @@ class Config:
     EVAL_MAX_STDOUT_BYTES: int = 256 * 1024
     EVAL_MAX_STDERR_BYTES: int = 256 * 1024
 
+    # Sandbox control: "true" = everyone allowed; comma-separated IDs = specific
+    # user IDs / group IDs allowed; empty/false = no one may use eval/workspace tools.
+    SANDBOX_ALLOW: str = ""
+
+    @property
+    def sandbox_allowed_set(self) -> set[int]:
+        raw = (self.SANDBOX_ALLOW or "").strip().lower()
+        if raw in ("1", "true", "yes", "all"):
+            return {-1}
+        result: set[int] = set()
+        for part in self.SANDBOX_ALLOW.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                result.add(int(part))
+            except ValueError:
+                pass
+        return result
+
+    def is_sandbox_allowed(self, user_id: int, chat_id: int) -> bool:
+        allowed = self.sandbox_allowed_set
+        if not allowed:
+            return False
+        if -1 in allowed:
+            return True
+        return user_id in allowed or chat_id in allowed
+
     @classmethod
     def from_env(cls) -> "Config":
         env_models = [m.strip() for m in os.environ.get("FREE_MODELS", "").split(",") if m.strip()]
@@ -121,6 +149,7 @@ class Config:
             EVAL_TIMEOUT=int(os.environ.get("EVAL_TIMEOUT", "30")),
             EVAL_MAX_STDOUT_BYTES=int(os.environ.get("EVAL_MAX_STDOUT_BYTES", str(256 * 1024))),
             EVAL_MAX_STDERR_BYTES=int(os.environ.get("EVAL_MAX_STDERR_BYTES", str(256 * 1024))),
+            SANDBOX_ALLOW=os.environ.get("SANDBOX_ALLOW", ""),
         )
 
     def is_vision_model(self, model: str) -> bool:

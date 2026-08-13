@@ -449,6 +449,18 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await safe_send(context.bot, chat_id, "🧹 Memory cleared for this chat.", ctx)
 
 
+async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ctx: BotContext = context.bot_data["ctx"]
+    chat = update.effective_chat
+    user = update.effective_user
+    text = (
+        f"Your user ID: `{user.id}`\n"
+        f"Chat ID: `{chat.id}`\n"
+        f"Chat type: `{chat.type}`"
+    )
+    await safe_send(context.bot, chat.id, text, ctx, parse_mode=ParseMode.MARKDOWN)
+
+
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ctx: BotContext = context.bot_data["ctx"]
     chat = update.effective_chat
@@ -653,7 +665,9 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
     if not is_private:
         participants = f"{user.first_name} (@{user.username or user.id})"
 
-    system_prompt = build_system_prompt(personality, language, participants)
+    sandbox_allowed = ctx.config.is_sandbox_allowed(user.id, chat.id)
+
+    system_prompt = build_system_prompt(personality, language, participants, sandbox_allowed=sandbox_allowed)
 
     # Load memory (history).
     history = await ctx.memory.get_messages(chat.id)
@@ -742,7 +756,7 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
             ctx.logger.debug("send_document failed: %s", type(exc).__name__)
 
     # ---- tools: workspace (post-process) ----
-    ws_ops = []
+    ws_ops = [] if sandbox_allowed else None
     for m in WS_LIST_RE.finditer(reply_text):
         ws_ops.append(("list", ".", ""))
     for m in WS_READ_RE.finditer(reply_text):
@@ -771,7 +785,7 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
             await safe_send(bot, chat.id, res, ctx)
 
     # ---- tools: eval (post-process) ----
-    eval_results = []
+    eval_results = [] if sandbox_allowed else None
     for m in EVAL_RE.finditer(reply_text):
         code = m.group(1)
         try:
@@ -879,6 +893,7 @@ def register_handlers(app, ctx: BotContext):
     app.add_handler(CommandHandler("format", cmd_format))
     app.add_handler(CommandHandler("clear", cmd_clear))
     app.add_handler(CommandHandler("new", cmd_clear))
+    app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(

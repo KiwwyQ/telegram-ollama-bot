@@ -21,6 +21,8 @@ MySQL/Postgres) for persistent storage.
 | **Web search** | The model can call Ollama's web search when it needs fresh info. |
 | **GIFs** | The model can send GIFs (Klipy; optional key, disabled if unset). |
 | **Files** | The bot generates text files on the fly and sends them as documents. |
+| **Workspace** | Each user gets a private workspace. List, read, write, and delete files via the model. |
+| **Python eval** | Execute Python code in your workspace (optional, gated by SANDBOX_ALLOW). |
 | **Trigger rules** | In groups it replies **only** when mentioned (`@BotUsername`) or when you reply to its messages. Normal group chatter is ignored. |
 | **Memory** | Per-chat history (per-user in DMs, shared in groups) with automatic summarization near the token limit. |
 | **Personality** | Default friendly persona; customizable per-user in DMs, per-group by admins. |
@@ -156,6 +158,7 @@ free Web Services.
 | `/lang [code]` | anywhere | Set your preferred reply language. |
 | `/format [none\|html\|md]` | anywhere | Reply formatting (plain / HTML / MarkdownV2). |
 | `/clear` or `/new` | anywhere | Clear this chat's memory. |
+| `/id` | anywhere | Show your Telegram user ID and the current chat ID. |
 | `/stats` | anywhere | Show current model, memory size estimate, key status. |
 
 > **Context-aware command menu:** the bot calls `setMyCommands` at startup with
@@ -178,13 +181,23 @@ to reveal these to the user):
 - **File** — model wraps content in `[FILE:name.txt] ... [/FILE]`; the bot sends it
   as a downloadable document and removes the marker from the visible chat.
 
+### Workspace
+Each user gets a private workspace directory. The model can list, read, write,
+and delete files using markers like `[WS_LIST]`, `[WS_READ:path]`,
+`[WS_WRITE:path]content[/WS_WRITE]`, and `[WS_DELETE:path]`.
+Paths are always relative and resolved inside the user's own workspace.
+
+### Python eval
+If `SANDBOX_ALLOW` permits, the model can execute Python code with `[EVAL]code[/EVAL]`.
+Use `# REQUIRE: package` comments to request pip installs. Execution runs in a
+subprocess with the user's workspace as cwd, with a configurable timeout and
+output caps.
+
 ### Vision
 Send a **photo** and mention/reply to the bot. The image is downloaded and passed
 to a vision-capable model (`DEFAULT_VISION_MODEL`, or any model whose name contains
 "vision"/"llava"/etc.). If your selected model isn't vision-capable, the bot
 automatically switches to the vision default for that image.
-
----
 
 ## 🔒 Security notes
 
@@ -195,6 +208,11 @@ automatically switches to the vision default for that image.
 - All user-facing errors are friendly and **never leak stack traces, paths, or keys**.
 - Rate limiting (`RATE_LIMIT_PER_USER_SECONDS`) throttles per-user abuse.
 - The `ADMIN_IDS` env var grants extra admin powers (e.g. forcing group defaults).
+- Workspace paths are resolved safely; `..` traversal, absolute paths, and symlinks
+  are rejected.
+- **Python eval is NOT a secure sandbox.** It runs with the bot's privileges and
+  has no memory/CPU quota. Use `SANDBOX_ALLOW` to restrict it to trusted users only.
+  When disabled, the model never sees workspace/eval tool instructions.
 
 ---
 
@@ -219,6 +237,7 @@ See `.env.example`. Highlights:
 | `RATE_LIMIT_PER_USER_SECONDS` | `3` | Min seconds between a user's requests. |
 | `STREAM_RESPONSES` | `true` | Progressive edits while generating. |
 | `LOG_LEVEL` | `INFO` | Logging verbosity. |
+| `SANDBOX_ALLOW` | — | Optional. Comma-separated user/group IDs allowed to use workspace & eval. `true` / `1` / `all` = everyone. Empty = disabled. |
 
 ---
 

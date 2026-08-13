@@ -25,6 +25,7 @@ logger = logging.getLogger("bot")
 PRIVATE_COMMANDS = [
     BotCommand("start", "Welcome & setup"),
     BotCommand("help", "Show all commands & help"),
+    BotCommand("id", "Show your user ID and chat ID"),
     BotCommand("setkey", "Set your Ollama API key (DM only)"),
     BotCommand("delkey", "Remove your stored API key"),
     BotCommand("model", "List & pick a free model"),
@@ -39,6 +40,7 @@ PRIVATE_COMMANDS = [
 GROUP_COMMANDS = [
     BotCommand("start", "Welcome & setup"),
     BotCommand("help", "Show all commands & help"),
+    BotCommand("id", "Show your user ID and chat ID"),
     BotCommand("model", "List & pick a free model"),
     BotCommand("personality", "View or set group personality"),
     BotCommand("lang", "Set reply language"),

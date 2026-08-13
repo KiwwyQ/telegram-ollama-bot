@@ -12,13 +12,17 @@ inside its reply (documented in personality.TOOL_INSTRUCTION):
   * [WS_WRITE:path]   -> write content to a file in the user's workspace
                         content here [/WS_WRITE]
   * [WS_DELETE:path]  -> delete a file from the user's workspace
+  * [EVAL]...[/EVAL]  -> execute Python code in the user's workspace
 
 This avoids depending on native function-calling support which varies across
 models and simplifies error handling.
 """
+from __future__ import annotations
+
 import base64
 import io
 import re
+from typing import Optional
 
 import httpx
 from telegram import InputFile
