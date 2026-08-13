@@ -53,7 +53,7 @@ class Config:
 
     # Model configuration.
     DEFAULT_MODEL: str = "gpt-oss:20b"
-    DEFAULT_VISION_MODEL: str = "llama3.2-vision"
+    DEFAULT_VISION_MODEL: str = "gemma3:27b"
     OLLAMA_BASE_URL: str = "https://ollama.com"
     FREE_MODELS: list = field(default_factory=list)
 
@@ -89,7 +89,7 @@ class Config:
             TELEGRAM_BOT_TOKEN=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
             ADMIN_IDS=_parse_int_set(os.environ.get("ADMIN_IDS", "")),
             DEFAULT_MODEL=os.environ.get("DEFAULT_MODEL", "gpt-oss:20b"),
-            DEFAULT_VISION_MODEL=os.environ.get("DEFAULT_VISION_MODEL", "llama3.2-vision"),
+            DEFAULT_VISION_MODEL=os.environ.get("DEFAULT_VISION_MODEL", "gemma3:27b"),
             OLLAMA_BASE_URL=os.environ.get("OLLAMA_BASE_URL", "https://ollama.com").rstrip("/"),
             FREE_MODELS=env_models or list(DEFAULT_FREE_MODELS),
             DATABASE_URL=os.environ.get("DATABASE_URL", ""),
