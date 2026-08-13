@@ -21,6 +21,7 @@ from ollama_client import OllamaClient
 from memory import MemoryManager
 from tools import Tools
 from workspace import WorkspaceManager
+from eval_tool import PythonEval
 from handlers import BotContext, register_handlers
 from keep_alive import start_health_server_in_thread
 from commands import register_commands
@@ -92,7 +93,14 @@ def main() -> None:
         max_workspace_size=config.WORKSPACE_MAX_WORKSPACE_SIZE,
         max_files=config.WORKSPACE_MAX_FILES,
     )
-    tools = Tools(ollama, config, logger, workspace=workspace)
+    eval_tool = PythonEval(
+        workspace=workspace,
+        env_dir=config.EVAL_ENV_DIR,
+        timeout=config.EVAL_TIMEOUT,
+        max_stdout_bytes=config.EVAL_MAX_STDOUT_BYTES,
+        max_stderr_bytes=config.EVAL_MAX_STDERR_BYTES,
+    )
+    tools = Tools(ollama, config, logger, workspace=workspace, eval_tool=eval_tool)
 
     app = (
         Application.builder()

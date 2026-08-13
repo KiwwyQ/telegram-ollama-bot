@@ -25,6 +25,7 @@ from telegram import InputFile
 
 from config import Config
 from workspace import WorkspaceManager, WorkspaceError
+from eval_tool import PythonEval, EvalError
 
 GIF_RE = re.compile(r"\[GIF:(.*?)\]", re.IGNORECASE)
 FILE_RE = re.compile(r"\[FILE:([^\]]+)\](.*?)\[/FILE\]", re.IGNORECASE | re.DOTALL)
@@ -33,10 +34,12 @@ WS_LIST_RE = re.compile(r"\[WS_LIST\]", re.IGNORECASE)
 WS_READ_RE = re.compile(r"\[WS_READ:([^\]]+)\]", re.IGNORECASE)
 WS_WRITE_RE = re.compile(r"\[WS_WRITE:([^\]]+)\](.*?)\[/WS_WRITE\]", re.IGNORECASE | re.DOTALL)
 WS_DELETE_RE = re.compile(r"\[WS_DELETE:([^\]]+)\]", re.IGNORECASE)
+EVAL_RE = re.compile(r"\[EVAL\](.*?)\[/EVAL\]", re.IGNORECASE | re.DOTALL)
+REQUIRE_RE = re.compile(r"^\s*#\s*REQUIRE:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 
 
 class Tools:
-    def __init__(self, ollama, config: Config, logger, workspace: Optional[WorkspaceManager] = None):
+    def __init__(self, ollama, config: Config, logger, workspace: Optional[WorkspaceManager] = None, eval_tool: Optional[PythonEval] = None):
         self.ollama = ollama
         self.config = config
         self.logger = logger
@@ -46,6 +49,7 @@ class Tools:
         self.klipy_key = (config.KLIPY_API_KEY or "").strip()
         self.gif_enabled = bool(self.klipy_key)
         self.workspace = workspace
+        self.eval_tool = eval_tool
 
     # ----------------------------------------------------------- marker helpers
     @staticmethod
@@ -61,6 +65,7 @@ class Tools:
         text = WS_READ_RE.sub("", text)
         text = WS_WRITE_RE.sub("", text)
         text = WS_DELETE_RE.sub("", text)
+        text = EVAL_RE.sub("", text)
         return text.strip()
 
     # --------------------------------------------------------------- web search
@@ -159,6 +164,35 @@ class Tools:
         except WorkspaceError as exc:
             return f"(Workspace error: {exc})"
         return f"(Deleted {relpath})"
+
+    # ------------------------------------------------------------------- eval
+    async def run_eval(self, user_id: int, code: str) -> str:
+        if not self.eval_tool:
+            return "(Eval is not configured.)"
+        try:
+            install = [pkg.strip() for pkg in REQUIRE_RE.findall(code) if pkg.strip()]
+            if install:
+                cleaned = REQUIRE_RE.sub("", code)
+            else:
+                cleaned = code
+            result = await self.eval_tool.execute(user_id, cleaned, install=install)
+        except EvalError as exc:
+            return f"(Eval error: {exc})"
+        except Exception as exc:
+            return f"(Eval error: {type(exc).__name__}: {exc})"
+        lines = [
+            f"Eval result (exit_code={result['exit_code']}, time={result['execution_time']}s):",
+        ]
+        if result["stdout"]:
+            lines.append(result["stdout"].rstrip())
+        if result["stderr"]:
+            lines.append("STDERR:")
+            lines.append(result["stderr"].rstrip())
+        if result["files_created"]:
+            lines.append("Files created: " + ", ".join(result["files_created"]))
+        if not result["success"]:
+            lines.append("(Execution failed)")
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------ image
     @staticmethod

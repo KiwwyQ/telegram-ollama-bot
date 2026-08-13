@@ -88,6 +88,12 @@ class Config:
     WORKSPACE_MAX_WORKSPACE_SIZE: int = 100 * 1024 * 1024
     WORKSPACE_MAX_FILES: int = 1000
 
+    # Python eval tool.
+    EVAL_ENV_DIR: str = "eval_env"
+    EVAL_TIMEOUT: int = 30
+    EVAL_MAX_STDOUT_BYTES: int = 256 * 1024
+    EVAL_MAX_STDERR_BYTES: int = 256 * 1024
+
     @classmethod
     def from_env(cls) -> "Config":
         env_models = [m.strip() for m in os.environ.get("FREE_MODELS", "").split(",") if m.strip()]
@@ -111,6 +117,10 @@ class Config:
             WORKSPACE_MAX_FILE_SIZE=int(os.environ.get("WORKSPACE_MAX_FILE_SIZE", str(5 * 1024 * 1024))),
             WORKSPACE_MAX_WORKSPACE_SIZE=int(os.environ.get("WORKSPACE_MAX_WORKSPACE_SIZE", str(100 * 1024 * 1024))),
             WORKSPACE_MAX_FILES=int(os.environ.get("WORKSPACE_MAX_FILES", "1000")),
+            EVAL_ENV_DIR=os.environ.get("EVAL_ENV_DIR", "eval_env"),
+            EVAL_TIMEOUT=int(os.environ.get("EVAL_TIMEOUT", "30")),
+            EVAL_MAX_STDOUT_BYTES=int(os.environ.get("EVAL_MAX_STDOUT_BYTES", str(256 * 1024))),
+            EVAL_MAX_STDERR_BYTES=int(os.environ.get("EVAL_MAX_STDERR_BYTES", str(256 * 1024))),
         )
 
     def is_vision_model(self, model: str) -> bool:

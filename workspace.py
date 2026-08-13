@@ -63,8 +63,11 @@ class WorkspaceManager:
             if parent.is_symlink():
                 raise WorkspaceError("Symlinks are not allowed.")
 
+    def _iter_files(self, user_dir: pathlib.Path) -> set[pathlib.Path]:
+        return {f for f in user_dir.rglob("*") if f.is_file()}
+
     def _count_files(self, user_dir: pathlib.Path) -> int:
-        return sum(1 for f in user_dir.rglob("*") if f.is_file())
+        return len(self._iter_files(user_dir))
 
     def _current_size(self, user_dir: pathlib.Path) -> int:
         return sum(f.stat().st_size for f in user_dir.rglob("*") if f.is_file())

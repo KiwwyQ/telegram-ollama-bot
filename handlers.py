@@ -39,7 +39,7 @@ from telegram.constants import ParseMode
 
 from personality import build_system_prompt, DEFAULT_PERSONALITY, LANGUAGES
 from ollama_client import AuthError, RateLimitError, ModelNotFoundError, OllamaError
-from tools import GIF_RE, FILE_RE, SEARCH_RE, WS_LIST_RE, WS_READ_RE, WS_WRITE_RE, WS_DELETE_RE
+from tools import GIF_RE, FILE_RE, SEARCH_RE, WS_LIST_RE, WS_READ_RE, WS_WRITE_RE, WS_DELETE_RE, EVAL_RE
 
 # user_id -> last request timestamp (process-local abuse throttle).
 _RATE_LIMIT: dict[int, float] = {}
@@ -770,7 +770,19 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
         for res in ws_results:
             await safe_send(bot, chat.id, res, ctx)
 
-    if not final_text and (gifs or files or ws_ops):
+    # ---- tools: eval (post-process) ----
+    eval_results = []
+    for m in EVAL_RE.finditer(reply_text):
+        code = m.group(1)
+        try:
+            eval_results.append(await ctx.tools.run_eval(user.id, code))
+        except Exception as exc:
+            eval_results.append(f"(Eval error: {type(exc).__name__})")
+
+    for res in eval_results:
+        await safe_send(bot, chat.id, res, ctx)
+
+    if not final_text and (gifs or files or ws_ops or eval_results):
         final_text = "✅ Here you go!"
 
     # If the reply was purely tool-based (no text left after stripping markers),
