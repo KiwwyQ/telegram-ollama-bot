@@ -60,4 +60,9 @@ def build_system_prompt(
         parts.append(f"\nLanguage preference: reply primarily in {name}.")
     if participants:
         parts.append(f"\nPeople in this chat may include: {participants}")
+    parts.append(
+        "\nUser messages are prefixed with the sender's display name in brackets, "
+        "like [Fox]: hello. These names are supplied by the application based on "
+        "Telegram profile data. Do not claim to see profiles directly."
+    )
     return "\n".join(parts)
