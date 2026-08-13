@@ -35,6 +35,7 @@ WS_DELETE_RE = re.compile(r"\[WS_DELETE:([^\]]+)\]", re.IGNORECASE)
 EVAL_RE = re.compile(r"\[EVAL\](.*?)\[/EVAL\]", re.IGNORECASE | re.DOTALL)
 SKILL_RE = re.compile(r"\[SKILL:([^\]]+)\]", re.IGNORECASE)
 SEND_FILE_RE = re.compile(r"\[SEND_FILE:([^\]]+)\]", re.IGNORECASE)
+DONE_RE = re.compile(r"\[DONE\]", re.IGNORECASE)
 
 
 class AgentError(Exception):
@@ -43,14 +44,14 @@ class AgentError(Exception):
 
 def _extract_progress_description(reply: str) -> str:
     lines = (reply or "").strip().splitlines()
-    for line in lines[:5]:
+    for line in lines[:8]:
         text = line.strip()
         if not text:
             continue
         if text.startswith("[") or text.startswith("```"):
             continue
-        if len(text) > 80:
-            text = text[:77] + "..."
+        if len(text) > 60:
+            text = text[:57] + "..."
         return text
     return "Working..."
 
@@ -123,11 +124,12 @@ async def run_agent_loop(
         has_tools = any(regex.findall(reply) for regex in (
             SEARCH_RE, GIF_RE, FILE_RE, WS_LIST_RE, WS_READ_RE, WS_WRITE_RE,
             WS_DELETE_RE, EVAL_RE, SKILL_RE, SEND_FILE_RE,
-        ))
+        )) and not DONE_RE.search(reply)
 
-        if not has_tools:
+        if not has_tools or DONE_RE.search(reply):
             logger.info("agent loop complete | user=%s steps=%s elapsed=%s", user_id, step + 1, time.perf_counter() - start)
-            return reply.strip()
+            clean = DONE_RE.sub("", reply).strip()
+            return clean
 
         # Execute tools and append results.
         tool_results = []
@@ -215,7 +217,7 @@ async def run_agent_loop(
                     lines.append("(Execution failed)")
                 tool_results.append("\n".join(lines))
             except Exception as exc:
-                tool_results.append(f"(Eval error: {type(exc).__name__})")
+                tool_results.append(f"(Eval error: {type(exc).__name__}: {exc}. Try checking the Python environment or simplifying the code.)")
 
         # Skills.
         for skill_name in SKILL_RE.findall(reply)[:3]:
