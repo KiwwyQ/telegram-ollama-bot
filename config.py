@@ -97,6 +97,10 @@ class Config:
     # Skills (read-only instruction files).
     SKILLS_DIR: str = "skills"
 
+    # Agent mode (lightweight multi-step tool loop).
+    AGENT_MODE_MAX_STEPS: int = 5
+    AGENT_MODE_TIMEOUT: int = 120
+
     # Sandbox control: "true" = everyone allowed; comma-separated IDs = specific
     # user IDs / group IDs allowed; empty/false = no one may use eval/workspace tools.
     SANDBOX_ALLOW: str = ""
@@ -153,6 +157,8 @@ class Config:
             EVAL_MAX_STDOUT_BYTES=int(os.environ.get("EVAL_MAX_STDOUT_BYTES", str(256 * 1024))),
             EVAL_MAX_STDERR_BYTES=int(os.environ.get("EVAL_MAX_STDERR_BYTES", str(256 * 1024))),
             SANDBOX_ALLOW=os.environ.get("SANDBOX_ALLOW", ""),
+            AGENT_MODE_MAX_STEPS=int(os.environ.get("AGENT_MODE_MAX_STEPS", "5")),
+            AGENT_MODE_TIMEOUT=int(os.environ.get("AGENT_MODE_TIMEOUT", "120")),
         )
 
     def is_vision_model(self, model: str) -> bool:

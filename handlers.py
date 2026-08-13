@@ -41,6 +41,7 @@ from personality import build_system_prompt, DEFAULT_PERSONALITY, LANGUAGES
 from ollama_client import AuthError, RateLimitError, ModelNotFoundError, OllamaError
 from tools import GIF_RE, FILE_RE, SEARCH_RE, WS_LIST_RE, WS_READ_RE, WS_WRITE_RE, WS_DELETE_RE, EVAL_RE, SKILL_RE, SEND_FILE_RE
 from document_processor import extract_text, is_supported_document, _sanitize_filename, DocumentError
+from agent import run_agent_loop, AgentError
 
 # user_id -> last request timestamp (process-local abuse throttle).
 _RATE_LIMIT: dict[int, float] = {}
@@ -702,7 +703,7 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
     sandbox_allowed = ctx.config.is_sandbox_allowed(user.id, chat.id)
     skills_available = bool(ctx.tools.skill_manager and ctx.tools.skill_manager.list_skills())
 
-    system_prompt = build_system_prompt(personality, language, participants, sandbox_allowed=sandbox_allowed, skills_available=skills_available)
+    system_prompt = build_system_prompt(personality, language, participants, sandbox_allowed=sandbox_allowed, skills_available=skills_available, agent_mode=sandbox_allowed)
 
     # Load memory (history).
     history = await ctx.memory.get_messages(chat.id)
@@ -762,6 +763,37 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
                               "⚠️ Unexpected error. Please try again later.",
                               model=model)
         return
+
+    # If the reply contains tool markers beyond web search, enter lightweight agent mode.
+    tool_marker_regexes = [
+        WS_LIST_RE, WS_READ_RE, WS_WRITE_RE, WS_DELETE_RE,
+        EVAL_RE, SKILL_RE, SEND_FILE_RE, FILE_RE, GIF_RE,
+    ]
+    if any(r.findall(reply_text) for r in tool_marker_regexes):
+        try:
+            reply_text = await run_agent_loop(
+                ctx=ctx,
+                user_id=user.id,
+                chat_id=chat.id,
+                bot=bot,
+                api_key=api_key,
+                model=model,
+                messages=full,
+                status_id=status_id,
+                parse_mode=parse_mode,
+                sandbox_allowed=sandbox_allowed,
+                max_steps=ctx.config.AGENT_MODE_MAX_STEPS,
+                timeout=float(ctx.config.AGENT_MODE_TIMEOUT),
+            )
+        except AgentError as exc:
+            await _finalize_error(bot, chat.id, status_id, ctx, exc, parse_mode,
+                                  f"⚠️ Agent stopped: {exc}", model=model)
+            return
+        except Exception as exc:
+            ctx.logger.exception("agent error")
+            await _finalize_error(bot, chat.id, status_id, ctx, exc, parse_mode,
+                                  "⚠️ Agent error. Please try again later.", model=model)
+            return
 
         # ---- tools: GIF + FILE (post-process) ----
     gifs = GIF_RE.findall(reply_text)
