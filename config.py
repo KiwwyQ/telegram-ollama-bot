@@ -106,5 +106,5 @@ class Config:
     def is_vision_model(self, model: str) -> bool:
         """Heuristic to detect whether a model name supports image input."""
         lowered = (model or "").lower()
-        markers = ("vision", "llava", "moondream", "minicpm", "qwen-vl", "qwen2-vl", "pixtral")
+        markers = ("vision", "llava", "moondream", "minicpm", "qwen-vl", "qwen2-vl", "pixtral", "gemma3")
         return any(m in lowered for m in markers)

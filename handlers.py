@@ -38,7 +38,7 @@ from telegram.error import TelegramError, RetryAfter
 from telegram.constants import ParseMode
 
 from personality import build_system_prompt, DEFAULT_PERSONALITY, LANGUAGES
-from ollama_client import AuthError, RateLimitError, OllamaError
+from ollama_client import AuthError, RateLimitError, ModelNotFoundError, OllamaError
 from tools import GIF_RE, FILE_RE, SEARCH_RE
 
 # user_id -> last request timestamp (process-local abuse throttle).
@@ -592,12 +592,24 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
             photo = message_photo(update)
             f = await bot.get_file(photo.file_id)
             data = await f.download_as_bytearray()
+            if not data:
+                raise ValueError("empty image data")
+            if len(data) > 20 * 1024 * 1024:
+                raise ValueError("image exceeds size limit")
             images_b64 = [base64.b64encode(bytes(data)).decode("utf-8")]
             if not ctx.config.is_vision_model(model):
                 model = ctx.config.DEFAULT_VISION_MODEL
         except Exception as exc:
-            ctx.logger.warning("image download failed: %s", type(exc).__name__)
+            ctx.logger.warning("image processing failed: %s", type(exc).__name__)
             images_b64 = None
+
+    if has_photo and images_b64 is None:
+        await safe_send(
+            bot, chat.id,
+            "⚠️ Couldn't process that image. Please try uploading it again.",
+            ctx,
+        )
+        return
 
     # Build the new user message content (with replied context).
     content = text
@@ -652,6 +664,10 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
     except AuthError:
         await _finalize_error(bot, chat.id, status_id, ctx, None, parse_mode,
                               "🔑 Your Ollama key appears invalid. Re-set it with /setkey in a private chat.")
+        return
+    except ModelNotFoundError:
+        await _finalize_error(bot, chat.id, status_id, ctx, None, parse_mode,
+                              "⚠️ The selected vision model isn't available. Use /model to pick a different one.")
         return
     except OllamaError as e:
         await _finalize_error(bot, chat.id, status_id, ctx, e, parse_mode,

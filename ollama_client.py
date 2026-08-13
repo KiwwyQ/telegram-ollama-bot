@@ -38,6 +38,10 @@ class RateLimitError(OllamaError):
     """Free daily usage exhausted or hard rate limited."""
 
 
+class ModelNotFoundError(OllamaError):
+    """The requested model is not available on the Ollama server."""
+
+
 class OllamaClient:
     def __init__(self, config: Config, logger):
         self.config = config
@@ -56,6 +60,11 @@ class OllamaClient:
             raise AuthError("Your Ollama key is invalid or missing.")
         if resp.status_code == 429:
             raise RateLimitError("Your free Ollama daily limit has been reached.")
+        if resp.status_code == 404:
+            body = resp.text or ""
+            low = body.lower()
+            if "model" in low and ("not found" in low or "no such" in low):
+                raise ModelNotFoundError("Vision model not available on this Ollama server.")
         if resp.status_code >= 400:
             body = resp.text or ""
             low = body.lower()
