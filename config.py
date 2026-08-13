@@ -82,6 +82,12 @@ class Config:
     STREAM_RESPONSES: bool = True
     LOG_LEVEL: str = "INFO"
 
+    # Workspace filesystem (per-user persistent storage).
+    WORKSPACE_ROOT: str = "workspaces"
+    WORKSPACE_MAX_FILE_SIZE: int = 5 * 1024 * 1024
+    WORKSPACE_MAX_WORKSPACE_SIZE: int = 100 * 1024 * 1024
+    WORKSPACE_MAX_FILES: int = 1000
+
     @classmethod
     def from_env(cls) -> "Config":
         env_models = [m.strip() for m in os.environ.get("FREE_MODELS", "").split(",") if m.strip()]
@@ -101,6 +107,10 @@ class Config:
             RATE_LIMIT_PER_USER_SECONDS=int(os.environ.get("RATE_LIMIT_PER_USER_SECONDS", "3")),
             STREAM_RESPONSES=os.environ.get("STREAM_RESPONSES", "true").lower() in ("1", "true", "yes"),
             LOG_LEVEL=os.environ.get("LOG_LEVEL", "INFO"),
+            WORKSPACE_ROOT=os.environ.get("WORKSPACE_ROOT", "workspaces"),
+            WORKSPACE_MAX_FILE_SIZE=int(os.environ.get("WORKSPACE_MAX_FILE_SIZE", str(5 * 1024 * 1024))),
+            WORKSPACE_MAX_WORKSPACE_SIZE=int(os.environ.get("WORKSPACE_MAX_WORKSPACE_SIZE", str(100 * 1024 * 1024))),
+            WORKSPACE_MAX_FILES=int(os.environ.get("WORKSPACE_MAX_FILES", "1000")),
         )
 
     def is_vision_model(self, model: str) -> bool:

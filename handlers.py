@@ -39,7 +39,7 @@ from telegram.constants import ParseMode
 
 from personality import build_system_prompt, DEFAULT_PERSONALITY, LANGUAGES
 from ollama_client import AuthError, RateLimitError, ModelNotFoundError, OllamaError
-from tools import GIF_RE, FILE_RE, SEARCH_RE
+from tools import GIF_RE, FILE_RE, SEARCH_RE, WS_LIST_RE, WS_READ_RE, WS_WRITE_RE, WS_DELETE_RE
 
 # user_id -> last request timestamp (process-local abuse throttle).
 _RATE_LIMIT: dict[int, float] = {}
@@ -741,7 +741,36 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
         except Exception as exc:
             ctx.logger.debug("send_document failed: %s", type(exc).__name__)
 
-    if not final_text and (gifs or files):
+    # ---- tools: workspace (post-process) ----
+    ws_ops = []
+    for m in WS_LIST_RE.finditer(reply_text):
+        ws_ops.append(("list", ".", ""))
+    for m in WS_READ_RE.finditer(reply_text):
+        ws_ops.append(("read", m.group(1).strip(), ""))
+    for m in WS_WRITE_RE.finditer(reply_text):
+        ws_ops.append(("write", m.group(1).strip(), m.group(2)))
+    for m in WS_DELETE_RE.finditer(reply_text):
+        ws_ops.append(("delete", m.group(1).strip(), ""))
+
+    ws_results = []
+    for op, relpath, content in ws_ops:
+        try:
+            if op == "list":
+                ws_results.append(await ctx.tools.ws_list(user.id, relpath))
+            elif op == "read":
+                ws_results.append(await ctx.tools.ws_read(user.id, relpath))
+            elif op == "write":
+                ws_results.append(await ctx.tools.ws_write(user.id, relpath, content))
+            elif op == "delete":
+                ws_results.append(await ctx.tools.ws_delete(user.id, relpath))
+        except Exception as exc:
+            ws_results.append(f"(Workspace error: {type(exc).__name__})")
+
+    if ws_results:
+        for res in ws_results:
+            await safe_send(bot, chat.id, res, ctx)
+
+    if not final_text and (gifs or files or ws_ops):
         final_text = "✅ Here you go!"
 
     # If the reply was purely tool-based (no text left after stripping markers),

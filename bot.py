@@ -20,6 +20,7 @@ from storage import Storage
 from ollama_client import OllamaClient
 from memory import MemoryManager
 from tools import Tools
+from workspace import WorkspaceManager
 from handlers import BotContext, register_handlers
 from keep_alive import start_health_server_in_thread
 from commands import register_commands
@@ -85,7 +86,13 @@ def main() -> None:
     storage = Storage(config)
     ollama = OllamaClient(config, logger)
     memory = MemoryManager(storage, config, ollama, logger)
-    tools = Tools(ollama, config, logger)
+    workspace = WorkspaceManager(
+        root=config.WORKSPACE_ROOT,
+        max_file_size=config.WORKSPACE_MAX_FILE_SIZE,
+        max_workspace_size=config.WORKSPACE_MAX_WORKSPACE_SIZE,
+        max_files=config.WORKSPACE_MAX_FILES,
+    )
+    tools = Tools(ollama, config, logger, workspace=workspace)
 
     app = (
         Application.builder()
