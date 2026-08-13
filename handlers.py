@@ -16,6 +16,7 @@ if several messages arrive while one is generating, they are processed in order.
 """
 import asyncio
 import base64
+import logging
 import re
 import time
 from dataclasses import dataclass, field
@@ -630,6 +631,7 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
     user = update.effective_user
     is_private = chat.type == "private"
     bot = context.bot
+    display_name = _display_name(user) if user else "User"
 
     # Status message (hourglass).
     status = await safe_send(bot, chat.id, "⏳", ctx)
@@ -708,7 +710,6 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
     history = await ctx.memory.get_messages(chat.id)
     # Prefix user messages with author names for model context.
     formatted_history = [_prefix_user_message(m) for m in history]
-    display_name = _display_name(user)
     formatted_new = _prefix_user_message(new_user_msg)
     # Build full message list (exclude prior system summaries' duplication is fine).
     full = [{"role": "system", "content": system_prompt}] + formatted_history + [formatted_new]
@@ -993,6 +994,11 @@ async def _finalize_error(bot, chat_id, status_id, ctx, exc, parse_mode, message
 
 
 # ================================================================ REGISTRATION
+async def on_error(update, context):
+    logger = context.bot_data.get("ctx", {}).logger or logging.getLogger("bot")
+    logger.error("Unhandled Telegram error", exc_info=context.error)
+
+
 def register_handlers(app, ctx: BotContext):
     app.bot_data["ctx"] = ctx
     app.add_handler(CommandHandler("start", cmd_start))
@@ -1011,3 +1017,4 @@ def register_handlers(app, ctx: BotContext):
     app.add_handler(
         MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, handle_message)
     )
+    app.add_error_handler(on_error)
