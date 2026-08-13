@@ -1,54 +1,51 @@
 # PDF Skill
 
-This skill explains how to work with PDF files using the Python tools available in this bot.
+PDF files for documents and reports. Use `pypdf` for reading and `fpdf2` or `reportlab` for writing.
 
-## Overview
+## Reading
 
-The bot can read, create, and manipulate PDF files through Python Eval. The execution environment has the user's workspace as the working directory.
+```python
+# REQUIRE: pypdf
+from pypdf import PdfReader
 
-## Useful Packages
+reader = PdfReader("input.pdf")
+for i, page in enumerate(reader.pages):
+    text = page.extract_text()
+    if text:
+        print(f"--- Page {i+1} ---")
+        print(text[:2000])
+```
 
-For PDF manipulation, commonly used packages include:
-- `pypdf` or `PyPDF2` - reading and extracting text from PDFs
-- `reportlab` - creating new PDFs
-- `fpdf2` - simpler PDF creation
+## Writing
 
-## Reading PDFs
-
-To extract text from a PDF:
-1. Upload the PDF to your workspace using `[WS_WRITE:document.pdf]` with the binary content, or place it in your workspace manually.
-2. Use Python Eval with `[EVAL]` to read it:
-   ```python
-   # REQUIRE: pypdf
-   from pypdf import PdfReader
-   reader = PdfReader("document.pdf")
-   text = "\n".join(page.extract_text() for page in reader.pages if page.extract_text())
-   print(text[:2000])
-   ```
-
-## Creating PDFs
-
-To generate a PDF:
 ```python
 # REQUIRE: fpdf2
 from fpdf import FPDF
+
 pdf = FPDF()
+pdf.set_auto_page_break(auto=True, margin=15)
 pdf.add_page()
 pdf.set_font("Arial", size=12)
-pdf.cell(200, 10, txt="Hello World", ln=1)
+pdf.cell(200, 10, txt="Hello, world!", ln=1)
 pdf.output("output.pdf")
 print("Created output.pdf")
 ```
 
-## Limitations
+## Advanced writing (reportlab)
 
-- The eval environment may not have all PDF packages pre-installed. Use `# REQUIRE: package` to install them.
-- Large PDFs may exceed output limits. Process in chunks if needed.
-- Binary PDF data cannot be passed directly through the text protocol. Save to workspace files instead.
+```python
+# REQUIRE: reportlab
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
 
-## Workflow
+c = canvas.Canvas("output.pdf", pagesize=letter)
+c.drawString(100, 700, "Hello, world!")
+c.save()
+```
 
-1. List workspace files with `[WS_LIST]`
-2. Read/write files with `[WS_READ:path]` / `[WS_WRITE:path]`
-3. Execute Python with `[EVAL]` to process PDFs
-4. Send results back as text or files
+## Notes
+
+- PDF is a complex format. Text extraction is approximate; layout may be lost.
+- For scanned PDFs, use OCR libraries like `pytesseract` (`# REQUIRE: pytesseract`), but this requires Tesseract installed on the system.
+- `pypdf` cannot edit existing PDFs reliably. Create new ones instead.
+- Large PDFs may exceed output limits. Extract text in chunks.
