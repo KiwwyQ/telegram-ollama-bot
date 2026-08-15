@@ -553,11 +553,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     has_document = False
     document_text = ""
     document_filename = ""
+    unsupported_document = False
     if not has_photo and message.document:
         mime = (message.document.mime_type or "").lower()
         fname = (message.document.file_name or "").lower()
         if is_supported_document(mime, fname):
             has_document = True
+            document_filename = _sanitize_filename(message.document.file_name or "document")
+        else:
+            unsupported_document = True
             document_filename = _sanitize_filename(message.document.file_name or "document")
 
     # Ignore pure commands here (CommandHandler handles them).
@@ -622,8 +626,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Serialize generation per chat (the per-chat queue).
     lock = context.chat_data.setdefault("gen_lock", asyncio.Lock())
     async with lock:
-        # Download supported documents to the user's workspace before generation.
-        if has_document and not document_text and message.document:
+        # Download documents to the user's workspace before generation.
+        if (has_document or unsupported_document) and not document_text and message.document:
             try:
                 f = await context.bot.get_file(message.document.file_id)
                 data = await f.download_as_bytearray()
@@ -638,10 +642,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         document_text = f"(Document error: {exc})"
             except Exception as exc:
                 document_text = f"(Document error: {type(exc).__name__})"
-        await _generate(update, context, ctx, text, has_photo, replied_human_text, api_key, user_rec, has_document=has_document, document_text=document_text, document_filename=document_filename)
+        await _generate(update, context, ctx, text, has_photo, replied_human_text, api_key, user_rec, has_document=has_document, document_text=document_text, document_filename=document_filename, unsupported_document=unsupported_document)
 
 
-async def _generate(update, context, ctx, text, has_photo, replied_human_text, api_key, user_rec, has_document=False, document_text="", document_filename=""):
+async def _generate(update, context, ctx, text, has_photo, replied_human_text, api_key, user_rec, has_document=False, document_text="", document_filename="", unsupported_document=False):
     chat = update.effective_chat
     user = update.effective_user
     is_private = chat.type == "private"
@@ -710,6 +714,8 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
             content = f"(Document: {document_filename})\n{document_text}\n\n{content}" if content else f"(Document: {document_filename})\n{document_text}"
         else:
             content = f"(Document: {document_filename})\n(empty or binary file - use shell to read raw bytes)\n\n{content}" if content else f"(Document: {document_filename})\n(empty or binary file - use shell to read raw bytes)"
+    elif unsupported_document:
+        content = f"(Unsupported file uploaded: {document_filename})\n\n{content}" if content else f"(Unsupported file uploaded: {document_filename})\nThis file type is not directly supported for text extraction. You can use shell commands to inspect it."
 
     new_user_msg = {"role": "user", "content": content, "name": display_name}
     if images_b64:
