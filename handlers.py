@@ -1087,6 +1087,6 @@ def register_handlers(app, ctx: BotContext):
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(
-        MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, handle_message)
+        MessageHandler((filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND, handle_message)
     )
     app.add_error_handler(on_error)
