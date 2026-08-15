@@ -46,6 +46,10 @@ from ollama_client import AuthError, RateLimitError, ModelNotFoundError, OllamaE
 from tools import GIF_RE, FILE_RE, SEARCH_RE, SKILL_RE, SEND_FILE_RE, SHELL_RE
 from document_processor import extract_text, is_supported_document, _sanitize_filename, DocumentError
 
+
+class AgentError(Exception):
+    """Raised when generation or shell loop cannot continue."""
+
 # user_id -> last request timestamp (process-local abuse throttle).
 _RATE_LIMIT: dict[int, float] = {}
 
@@ -491,6 +495,15 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await safe_send(context.bot, chat.id, text, ctx, parse_mode=ParseMode.MARKDOWN)
 
 
+async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ctx: BotContext = context.bot_data["ctx"]
+    chat_id = update.effective_chat.id
+    cancel_event = context.chat_data.get("cancel_generation")
+    if cancel_event:
+        cancel_event.set()
+    await safe_send(context.bot, chat_id, "🛑 Stopping...", ctx)
+
+
 # ============================================================= CALLBACK QUERIES
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ctx: BotContext = context.bot_data["ctx"]
@@ -639,6 +652,10 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
     status = await safe_send(bot, chat.id, "⏳", ctx)
     status_id = status.message_id if status else None
 
+    # Cancellation support for /stop.
+    cancel_event = context.chat_data.setdefault("cancel_generation", asyncio.Event())
+    cancel_event.clear()
+
     # Determine model + personality.
     if is_private:
         model = user_rec.get("model") or ctx.config.DEFAULT_MODEL
@@ -766,6 +783,35 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
                               model=model)
         return
 
+    # ---- tools: shell loop (iterative, sandbox-only) ----
+    if sandbox_allowed and SHELL_RE.search(reply_text):
+        try:
+            reply_text = await _run_shell_loop(
+                bot=bot,
+                chat_id=chat.id,
+                user_id=user.id,
+                status_id=status_id,
+                ctx=ctx,
+                api_key=api_key,
+                model=model,
+                messages=full,
+                parse_mode=parse_mode,
+                display_name=display_name,
+                sandbox_allowed=sandbox_allowed,
+                cancel_event=cancel_event,
+            )
+        except AgentError as exc:
+            user_msg = str(exc) if exc else "The shell loop could not continue."
+            if not user_msg.startswith("⚠️"):
+                user_msg = f"⚠️ {user_msg}"
+            await _finalize_error(bot, chat.id, status_id, ctx, exc, parse_mode, user_msg, model=model)
+            return
+        except Exception as exc:
+            ctx.logger.exception("shell loop error")
+            await _finalize_error(bot, chat.id, status_id, ctx, exc, parse_mode,
+                                  "⚠️ Something went wrong while running commands. Please try again later.", model=model)
+            return
+
     # ---- tools: post-process ----
     final_text = ctx.tools.strip_markers(reply_text)
 
@@ -793,16 +839,6 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
             await bot.send_document(chat.id, document=doc)
         except Exception as exc:
             ctx.logger.debug("send_document failed: %s", type(exc).__name__)
-
-    shell_results = []
-    if sandbox_allowed:
-        for m in SHELL_RE.finditer(reply_text):
-            cmd = m.group(1).strip()
-            if cmd:
-                shell_results.append(await ctx.tools.do_shell(user.id, cmd))
-
-    for res in shell_results:
-        await safe_send(bot, chat.id, res, ctx)
 
     # ---- tools: skills (post-process) ----
     skill_results = []
@@ -847,7 +883,7 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
         except Exception as exc:
             await safe_send(bot, chat.id, f"(Send file error: {type(exc).__name__})", ctx)
 
-    if not final_text and (gifs or files or shell_results or skill_results or send_file_ops):
+    if not final_text and (gifs or files or skill_results or send_file_ops):
         final_text = "✅ Here you go!"
 
     # If the reply was purely tool-based (no text left after stripping markers),
@@ -931,6 +967,84 @@ async def _finalize_error(bot, chat_id, status_id, ctx, exc, parse_mode, message
         await safe_send(bot, chat_id, message, ctx)
 
 
+async def _run_shell_loop(
+    bot, chat_id, user_id, status_id, ctx, api_key, model, messages, parse_mode, display_name, sandbox_allowed: bool, cancel_event,
+) -> str:
+    """Iterative shell loop: AI generates shell commands, bot runs them, feeds results back.
+
+    Returns the final assistant reply text when no more shell markers are present.
+    """
+    loop_messages = list(messages)
+    start = time.perf_counter()
+    max_steps = ctx.config.SHELL_LOOP_MAX_STEPS
+    timeout = ctx.config.SHELL_LOOP_TIMEOUT
+
+    for step in range(max_steps):
+        if cancel_event.is_set():
+            return "Stopped."
+
+        if time.perf_counter() - start > timeout:
+            ctx.logger.warning("shell loop timeout | user=%s step=%s", user_id, step)
+            return "I ran out of time. Please try a simpler request, or break it into smaller steps."
+
+        if status_id:
+            try:
+                await bot.edit_message_text(
+                    text=f"🤔 Step {step + 1}/{max_steps} - thinking...",
+                    chat_id=chat_id,
+                    message_id=status_id,
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                pass
+
+        try:
+            reply = await ctx.ollama.chat(api_key, model, loop_messages, stream=False)
+        except Exception as exc:
+            ctx.logger.error("shell loop generation failed | user=%s step=%s exc=%s", user_id, step, type(exc).__name__)
+            raise AgentError(f"Generation failed: {type(exc).__name__}") from exc
+
+        if not reply:
+            continue
+
+        shell_matches = list(SHELL_RE.finditer(reply))
+        if not shell_matches:
+            return reply
+
+        tool_results = []
+        for m in shell_matches:
+            cmd = m.group(1).strip()
+            if not cmd:
+                continue
+            if cancel_event.is_set():
+                break
+            if status_id:
+                try:
+                    safe_cmd = cmd[:120] + ("..." if len(cmd) > 120 else "")
+                    await bot.edit_message_text(
+                        text=f"🔧 Step {step + 1}/{max_steps} - `{safe_cmd}`",
+                        chat_id=chat_id,
+                        message_id=status_id,
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    pass
+            result = await ctx.tools.do_shell(user_id, cmd)
+            tool_results.append(f"$ {cmd}\n{result}")
+
+        if cancel_event.is_set():
+            return "Stopped."
+
+        if not tool_results:
+            return reply
+
+        loop_messages.append({"role": "assistant", "content": reply})
+        loop_messages.append({"role": "user", "content": "\n\n".join(tool_results)})
+
+    ctx.logger.warning("shell loop max steps reached | user=%s max_steps=%s", user_id, max_steps)
+    return "I couldn't finish this within the allowed steps. Please try a simpler request, or ask for help with one part at a time."
+
+
 # ================================================================ REGISTRATION
 async def on_error(update, context):
     logger = context.bot_data.get("ctx", {}).logger or logging.getLogger("bot")
@@ -949,6 +1063,7 @@ def register_handlers(app, ctx: BotContext):
     app.add_handler(CommandHandler("format", cmd_format))
     app.add_handler(CommandHandler("clear", cmd_clear))
     app.add_handler(CommandHandler("new", cmd_clear))
+    app.add_handler(CommandHandler("stop", cmd_stop))
     app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CallbackQueryHandler(on_callback))

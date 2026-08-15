@@ -100,6 +100,8 @@ class Config:
     # Shell tool (restricted subprocess execution for sandbox-allowed chats).
     SHELL_TIMEOUT: int = 30
     SHELL_MAX_OUTPUT: int = 8192
+    SHELL_LOOP_MAX_STEPS: int = 12
+    SHELL_LOOP_TIMEOUT: int = 300
 
     # Sandbox control: "true" = everyone allowed; comma-separated IDs = specific
     # user IDs / group IDs allowed; empty/false = no one may use shell/skills tools.
@@ -158,6 +160,8 @@ class Config:
             EVAL_MAX_STDERR_BYTES=int(os.environ.get("EVAL_MAX_STDERR_BYTES", str(256 * 1024))),
             SHELL_TIMEOUT=int(os.environ.get("SHELL_TIMEOUT", "30")),
             SHELL_MAX_OUTPUT=int(os.environ.get("SHELL_MAX_OUTPUT", str(8 * 1024))),
+            SHELL_LOOP_MAX_STEPS=int(os.environ.get("SHELL_LOOP_MAX_STEPS", "12")),
+            SHELL_LOOP_TIMEOUT=int(os.environ.get("SHELL_LOOP_TIMEOUT", "300")),
             SANDBOX_ALLOW=os.environ.get("SANDBOX_ALLOW", ""),
         )
 
