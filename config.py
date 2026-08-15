@@ -97,12 +97,12 @@ class Config:
     # Skills (read-only instruction files).
     SKILLS_DIR: str = "skills"
 
-    # Agent mode (lightweight multi-step tool loop).
-    AGENT_MODE_MAX_STEPS: int = 15
-    AGENT_MODE_TIMEOUT: int = 600
+    # Shell tool (restricted subprocess execution for sandbox-allowed chats).
+    SHELL_TIMEOUT: int = 30
+    SHELL_MAX_OUTPUT: int = 8192
 
     # Sandbox control: "true" = everyone allowed; comma-separated IDs = specific
-    # user IDs / group IDs allowed; empty/false = no one may use eval/workspace tools.
+    # user IDs / group IDs allowed; empty/false = no one may use shell/skills tools.
     SANDBOX_ALLOW: str = ""
 
     @property
@@ -156,9 +156,9 @@ class Config:
             EVAL_TIMEOUT=int(os.environ.get("EVAL_TIMEOUT", "20")),
             EVAL_MAX_STDOUT_BYTES=int(os.environ.get("EVAL_MAX_STDOUT_BYTES", str(256 * 1024))),
             EVAL_MAX_STDERR_BYTES=int(os.environ.get("EVAL_MAX_STDERR_BYTES", str(256 * 1024))),
+            SHELL_TIMEOUT=int(os.environ.get("SHELL_TIMEOUT", "30")),
+            SHELL_MAX_OUTPUT=int(os.environ.get("SHELL_MAX_OUTPUT", str(8 * 1024))),
             SANDBOX_ALLOW=os.environ.get("SANDBOX_ALLOW", ""),
-            AGENT_MODE_MAX_STEPS=int(os.environ.get("AGENT_MODE_MAX_STEPS", "15")),
-            AGENT_MODE_TIMEOUT=int(os.environ.get("AGENT_MODE_TIMEOUT", "600")),
         )
 
     def is_vision_model(self, model: str) -> bool:

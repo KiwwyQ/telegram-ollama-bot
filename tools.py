@@ -1,5 +1,5 @@
 """
-Tool layer: web search, GIF search, file generation, and vision image handling.
+Tool layer: web search, GIF search, file generation, shell execution, and vision image handling.
 
 Tools are driven by a simple, reliable text protocol that the model triggers
 inside its reply (documented in personality.TOOL_INSTRUCTION):
@@ -7,12 +7,8 @@ inside its reply (documented in personality.TOOL_INSTRUCTION):
   * [GIF: term]       -> the bot sends a GIF as a separate animation message
   * [FILE:name.txt]   -> the bot sends file content as a document
                         content here [/FILE]
-  * [WS_LIST]         -> list files in the user's workspace
-  * [WS_READ:path]    -> read a file from the user's workspace
-  * [WS_WRITE:path]   -> write content to a file in the user's workspace
-                        content here [/WS_WRITE]
-  * [WS_DELETE:path]  -> delete a file from the user's workspace
-  * [EVAL]...[/EVAL]  -> execute Python code in the user's workspace
+  * [SEND_FILE:path]  -> send a file from the user's workspace
+  * [SHELL]command[/SHELL] -> run a shell command in the user's workspace (sandbox-only)
 
 This avoids depending on native function-calling support which varies across
 models and simplifies error handling.
@@ -21,7 +17,11 @@ from __future__ import annotations
 
 import base64
 import io
+import os
 import re
+import subprocess
+import asyncio
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -29,34 +29,25 @@ from telegram import InputFile
 
 from config import Config
 from workspace import WorkspaceManager, WorkspaceError
-from eval_tool import PythonEval, EvalError
 from skill_manager import SkillManager, SkillError
 
 GIF_RE = re.compile(r"\[GIF:(.*?)\]", re.IGNORECASE)
 FILE_RE = re.compile(r"\[FILE:([^\]]+)\](.*?)\[/FILE\]", re.IGNORECASE | re.DOTALL)
 SEARCH_RE = re.compile(r"\[SEARCH:(.*?)\]", re.IGNORECASE)
-WS_LIST_RE = re.compile(r"\[WS_LIST\]", re.IGNORECASE)
-WS_READ_RE = re.compile(r"\[WS_READ:([^\]]+)\]", re.IGNORECASE)
-WS_WRITE_RE = re.compile(r"\[WS_WRITE:([^\]]+)\](.*?)\[/WS_WRITE\]", re.IGNORECASE | re.DOTALL)
-WS_DELETE_RE = re.compile(r"\[WS_DELETE:([^\]]+)\]", re.IGNORECASE)
-EVAL_RE = re.compile(r"\[EVAL\](.*?)\[/EVAL\]", re.IGNORECASE | re.DOTALL)
-REQUIRE_RE = re.compile(r"^\s*#\s*REQUIRE:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 SKILL_RE = re.compile(r"\[SKILL:([^\]]+)\]", re.IGNORECASE)
 SEND_FILE_RE = re.compile(r"\[SEND_FILE:([^\]]+)\]", re.IGNORECASE)
+SHELL_RE = re.compile(r"\[SHELL\](.*?)\[/SHELL\]", re.IGNORECASE | re.DOTALL)
 
 
 class Tools:
-    def __init__(self, ollama, config: Config, logger, workspace: Optional[WorkspaceManager] = None, eval_tool: Optional[PythonEval] = None, skill_manager: Optional[SkillManager] = None):
+    def __init__(self, ollama, config: Config, logger, workspace: Optional[WorkspaceManager] = None, skill_manager: Optional[SkillManager] = None):
         self.ollama = ollama
         self.config = config
         self.logger = logger
         self._http = httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=10.0))
-        # Klipy GIF API: optional. Without a key the GIF tool is disabled so the
-        # bot never crashes. Get a free production key: https://klipy.com/docs
         self.klipy_key = (config.KLIPY_API_KEY or "").strip()
         self.gif_enabled = bool(self.klipy_key)
         self.workspace = workspace
-        self.eval_tool = eval_tool
         self.skill_manager = skill_manager
 
     # ----------------------------------------------------------- marker helpers
@@ -69,13 +60,9 @@ class Tools:
         text = GIF_RE.sub("", text)
         text = FILE_RE.sub("", text)
         text = SEARCH_RE.sub("", text)
-        text = WS_LIST_RE.sub("", text)
-        text = WS_READ_RE.sub("", text)
-        text = WS_WRITE_RE.sub("", text)
-        text = WS_DELETE_RE.sub("", text)
-        text = EVAL_RE.sub("", text)
         text = SKILL_RE.sub("", text)
         text = SEND_FILE_RE.sub("", text)
+        text = SHELL_RE.sub("", text)
         return text.strip()
 
     # --------------------------------------------------------------- web search
@@ -130,90 +117,6 @@ class Tools:
     def make_document(filename: str, content: str) -> InputFile:
         return InputFile(io.BytesIO(content.encode("utf-8")), filename=filename)
 
-    # ------------------------------------------------------------------- workspace
-    async def ws_list(self, user_id: int, relpath: str = ".") -> str:
-        if not self.workspace:
-            return "(Workspace is not configured.)"
-        try:
-            entries = await self.workspace.list_files(user_id, relpath)
-        except WorkspaceError as exc:
-            return f"(Workspace error: {exc})"
-        if not entries:
-            return "(Workspace is empty.)"
-        lines = []
-        for entry in entries:
-            label = "/" if entry["is_dir"] else ""
-            size = entry["size"]
-            human = f"{size // 1024}KB" if size >= 1024 else f"{size}B"
-            lines.append(f"{entry['name']}{label} ({human})")
-        return "Workspace files:\n" + "\n".join(lines)
-
-    async def ws_read(self, user_id: int, relpath: str) -> str:
-        if not self.workspace:
-            return "(Workspace is not configured.)"
-        try:
-            content = await self.workspace.read_file(user_id, relpath)
-        except WorkspaceError as exc:
-            return f"(Workspace error: {exc})"
-        return content
-
-    async def ws_write(self, user_id: int, relpath: str, content: str) -> str:
-        if not self.workspace:
-            return "(Workspace is not configured.)"
-        try:
-            await self.workspace.write_file(user_id, relpath, content)
-        except WorkspaceError as exc:
-            return f"(Workspace error: {exc})"
-        return f"(Wrote {relpath})"
-
-    async def ws_delete(self, user_id: int, relpath: str) -> str:
-        if not self.workspace:
-            return "(Workspace is not configured.)"
-        try:
-            await self.workspace.delete_file(user_id, relpath)
-        except WorkspaceError as exc:
-            return f"(Workspace error: {exc})"
-        return f"(Deleted {relpath})"
-
-    # ------------------------------------------------------------------- eval
-    async def run_eval(self, user_id: int, code: str) -> str:
-        if not self.eval_tool:
-            return "(Eval is not configured.)"
-        try:
-            install = [pkg.strip() for pkg in REQUIRE_RE.findall(code) if pkg.strip()]
-            if install:
-                cleaned = REQUIRE_RE.sub("", code)
-            else:
-                cleaned = code
-            result = await self.eval_tool.execute(user_id, cleaned, install=install)
-        except EvalError as exc:
-            return f"(Eval error: {exc})"
-        except Exception as exc:
-            return f"(Eval error: {type(exc).__name__}: {exc})"
-        lines = [
-            f"Eval result (exit_code={result['exit_code']}, time={result['execution_time']}s):",
-        ]
-        if result["stdout"]:
-            lines.append(result["stdout"].rstrip())
-        if result["stderr"]:
-            lines.append("STDERR:")
-            lines.append(result["stderr"].rstrip())
-        if result["files_created"]:
-            lines.append("Files created: " + ", ".join(result["files_created"]))
-        if not result["success"]:
-            lines.append("(Execution failed)")
-        return "\n".join(lines)
-
-    # ------------------------------------------------------------------- skills
-    async def read_skill(self, name: str) -> str:
-        if not self.skill_manager:
-            return "(Skills are not configured.)"
-        try:
-            content = self.skill_manager.read_skill(name)
-        except SkillError as exc:
-            return f"(Skill error: {exc})"
-        return f"[SKILL: {name}]\n{content}\n[/END SKILL]"
-
     async def send_file(self, user_id: int, relpath: str) -> InputFile:
         if not self.workspace:
             raise WorkspaceError("Workspace is not configured.")
@@ -226,6 +129,71 @@ class Tools:
         if size > self.workspace.max_file_size:
             raise WorkspaceError(f"File too large: {size} bytes, limit is {self.workspace.max_file_size} bytes")
         return InputFile(open(target, "rb"), filename=target.name)
+
+    # ------------------------------------------------------------------- shell
+    async def do_shell(self, user_id: int, command: str) -> str:
+        if not command or not command.strip():
+            return "(Shell error: empty command)"
+        cmd = command.strip()
+        lower = cmd.lower()
+        blocked = [
+            "sudo", "su ", "passwd", "shadow", "shutdown", "reboot",
+            "mkfs", "fdisk", "dd if=", "kill -9", "iptables", "ufw ",
+            "chmod 777 /", "rm -rf /", "curl ", "wget ", "nc ", "ncat",
+            "python -c", "perl -e", "ruby -e",
+        ]
+        for b in blocked:
+            if b in lower:
+                return f"(Shell error: command blocked for security: {b.strip()})"
+        cwd = None
+        if self.workspace:
+            try:
+                cwd = str(self.workspace._user_dir(user_id))
+            except Exception:
+                cwd = None
+        env = {
+            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "LANG": "C.UTF-8",
+        }
+        if cwd:
+            env["HOME"] = cwd
+        try:
+            loop = asyncio.get_event_loop()
+            def _run():
+                return subprocess.run(
+                    cmd,
+                    shell=True,
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.config.SHELL_TIMEOUT,
+                    env=env,
+                )
+            proc = await loop.run_in_executor(None, _run)
+        except subprocess.TimeoutExpired:
+            return f"(Shell error: command timed out after {self.config.SHELL_TIMEOUT}s)"
+        except Exception as exc:
+            return f"(Shell error: {type(exc).__name__}: {exc})"
+        out = (proc.stdout or "")[: self.config.SHELL_MAX_OUTPUT]
+        err = (proc.stderr or "")[: self.config.SHELL_MAX_OUTPUT // 2]
+        if proc.returncode != 0:
+            msg = f"(exit {proc.returncode})"
+            if err:
+                msg += f"\n{err}"
+            return msg
+        if not out and not err:
+            return "(command completed with no output)"
+        return out if out else err
+
+    # ------------------------------------------------------------------- skills
+    async def read_skill(self, name: str) -> str:
+        if not self.skill_manager:
+            return "(Skills are not configured.)"
+        try:
+            content = self.skill_manager.read_skill(name)
+        except SkillError as exc:
+            return f"(Skill error: {exc})"
+        return f"[SKILL: {name}]\n{content}\n[/END SKILL]"
 
     # ------------------------------------------------------------------ image
     @staticmethod

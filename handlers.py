@@ -13,6 +13,9 @@ Trigger rules (critical):
 
 Generation is serialized per chat with an asyncio.Lock (the per-chat queue), so
 if several messages arrive while one is generating, they are processed in order.
+
+Tools are executed in a single pass after generation (web search may loop a few
+times during generation). Shell access is restricted to sandbox-allowed chats.
 """
 import asyncio
 import base64
@@ -40,9 +43,8 @@ from telegram.constants import ParseMode
 
 from personality import build_system_prompt, DEFAULT_PERSONALITY, LANGUAGES
 from ollama_client import AuthError, RateLimitError, ModelNotFoundError, OllamaError
-from tools import GIF_RE, FILE_RE, SEARCH_RE, WS_LIST_RE, WS_READ_RE, WS_WRITE_RE, WS_DELETE_RE, EVAL_RE, SKILL_RE, SEND_FILE_RE
+from tools import GIF_RE, FILE_RE, SEARCH_RE, SKILL_RE, SEND_FILE_RE, SHELL_RE
 from document_processor import extract_text, is_supported_document, _sanitize_filename, DocumentError
-from agent import run_agent_loop, AgentError
 
 # user_id -> last request timestamp (process-local abuse throttle).
 _RATE_LIMIT: dict[int, float] = {}
@@ -704,7 +706,7 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
     sandbox_allowed = ctx.config.is_sandbox_allowed(user.id, chat.id)
     skills_available = bool(ctx.tools.skill_manager and ctx.tools.skill_manager.list_skills())
 
-    system_prompt = build_system_prompt(personality, language, participants, sandbox_allowed=sandbox_allowed, skills_available=skills_available, agent_mode=sandbox_allowed)
+    system_prompt = build_system_prompt(personality, language, participants, sandbox_allowed=sandbox_allowed, skills_available=skills_available, shell_mode=sandbox_allowed)
 
     # Load memory (history).
     history = await ctx.memory.get_messages(chat.id)
@@ -764,158 +766,89 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
                               model=model)
         return
 
-    # If the reply contains tool markers beyond web search, enter lightweight agent mode.
-    agent_mode_used = False
-    tool_marker_regexes = [
-        WS_LIST_RE, WS_READ_RE, WS_WRITE_RE, WS_DELETE_RE,
-        EVAL_RE, SKILL_RE, SEND_FILE_RE, FILE_RE, GIF_RE,
-    ]
-    if any(r.findall(reply_text) for r in tool_marker_regexes):
-        agent_mode_used = True
-        try:
-            reply_text = await run_agent_loop(
-                ctx=ctx,
-                user_id=user.id,
-                chat_id=chat.id,
-                bot=bot,
-                api_key=api_key,
-                model=model,
-                messages=full,
-                status_id=status_id,
-                parse_mode=parse_mode,
-                sandbox_allowed=sandbox_allowed,
-                max_steps=ctx.config.AGENT_MODE_MAX_STEPS,
-                timeout=float(ctx.config.AGENT_MODE_TIMEOUT),
-            )
-        except AgentError as exc:
-            user_msg = str(exc) if exc else "The agent could not complete the task."
-            if not user_msg.startswith("⚠️"):
-                user_msg = f"⚠️ {user_msg}"
-            await _finalize_error(bot, chat.id, status_id, ctx, exc, parse_mode,
-                                  user_msg, model=model)
-            return
-        except Exception as exc:
-            ctx.logger.exception("agent error")
-            await _finalize_error(bot, chat.id, status_id, ctx, exc, parse_mode,
-                                  "⚠️ Agent error. Please try again later.", model=model)
-            return
+    # ---- tools: post-process ----
+    final_text = ctx.tools.strip_markers(reply_text)
 
-    if agent_mode_used:
-        final_text = ctx.tools.strip_markers(reply_text)
+    gifs = GIF_RE.findall(reply_text)
+    files = FILE_RE.findall(reply_text)
+
+    if ctx.tools.gif_enabled:
+        for term in gifs[:3]:
+            term = term.strip()
+            gif_url = await ctx.tools.search_gif(term)
+            if gif_url:
+                try:
+                    await bot.send_animation(chat.id, animation=gif_url, caption=None)
+                except Exception as exc:
+                    ctx.logger.debug("send_animation failed: %s", type(exc).__name__)
+            else:
+                await safe_send(bot, chat.id, f"(Couldn't find a GIF for '{term}' right now.)", ctx)
     else:
-        # ---- tools: GIF + FILE (post-process) ----
-        gifs = GIF_RE.findall(reply_text)
-        files = FILE_RE.findall(reply_text)
-        final_text = ctx.tools.strip_markers(reply_text)
+        if gifs:
+            ctx.logger.debug("GIF requested but Klipy key not configured; skipping.")
 
-        if ctx.tools.gif_enabled:
-            for term in gifs[:3]:
-                term = term.strip()
-                gif_url = await ctx.tools.search_gif(term)
-                if gif_url:
-                    try:
-                        await bot.send_animation(chat.id, animation=gif_url, caption=None)
-                    except Exception as exc:
-                        ctx.logger.debug("send_animation failed: %s", type(exc).__name__)
-                else:
-                    await safe_send(bot, chat.id, f"(Couldn't find a GIF for '{term}' right now.)", ctx)
+    for fname, fcontent in files[:3]:
+        try:
+            doc = ctx.tools.make_document(fname.strip(), fcontent)
+            await bot.send_document(chat.id, document=doc)
+        except Exception as exc:
+            ctx.logger.debug("send_document failed: %s", type(exc).__name__)
+
+    shell_results = []
+    if sandbox_allowed:
+        for m in SHELL_RE.finditer(reply_text):
+            cmd = m.group(1).strip()
+            if cmd:
+                shell_results.append(await ctx.tools.do_shell(user.id, cmd))
+
+    for res in shell_results:
+        await safe_send(bot, chat.id, res, ctx)
+
+    # ---- tools: skills (post-process) ----
+    skill_results = []
+    for m in SKILL_RE.finditer(reply_text):
+        skill_name = m.group(1).strip()
+        if not skill_name:
+            continue
+        try:
+            skill_content = await ctx.tools.read_skill(skill_name)
+        except Exception as exc:
+            skill_content = f"(Skill error: {type(exc).__name__})"
+        if skill_content.startswith("(Skill error:") or skill_content.startswith("(Skills are not configured.)"):
+            skill_results.append(skill_content)
         else:
-            if gifs:
-                ctx.logger.debug("GIF requested but Klipy key not configured; skipping.")
+            skill_results.append(skill_name)
+            raw = ctx.tools.skill_manager.read_skill(skill_name)
+            await ctx.memory.add_message(chat.id, "system", f"[SKILL: {skill_name}]\n{raw}\n[/END SKILL]")
 
-        for fname, fcontent in files[:3]:
-            try:
-                doc = ctx.tools.make_document(fname.strip(), fcontent)
-                await bot.send_document(chat.id, document=doc)
-            except Exception as exc:
-                ctx.logger.debug("send_document failed: %s", type(exc).__name__)
-
-        # ---- tools: workspace (post-process) ----
-        ws_ops = [] if sandbox_allowed else None
-        for m in WS_LIST_RE.finditer(reply_text):
-            ws_ops.append(("list", ".", ""))
-        for m in WS_READ_RE.finditer(reply_text):
-            ws_ops.append(("read", m.group(1).strip(), ""))
-        for m in WS_WRITE_RE.finditer(reply_text):
-            ws_ops.append(("write", m.group(1).strip(), m.group(2)))
-        for m in WS_DELETE_RE.finditer(reply_text):
-            ws_ops.append(("delete", m.group(1).strip(), ""))
-
-        ws_results = []
-        for op, relpath, content in ws_ops:
-            try:
-                if op == "list":
-                    ws_results.append(await ctx.tools.ws_list(user.id, relpath))
-                elif op == "read":
-                    ws_results.append(await ctx.tools.ws_read(user.id, relpath))
-                elif op == "write":
-                    ws_results.append(await ctx.tools.ws_write(user.id, relpath, content))
-                elif op == "delete":
-                    ws_results.append(await ctx.tools.ws_delete(user.id, relpath))
-            except Exception as exc:
-                ws_results.append(f"(Workspace error: {type(exc).__name__})")
-
-        if ws_results:
-            for res in ws_results:
-                await safe_send(bot, chat.id, res, ctx)
-
-        # ---- tools: eval (post-process) ----
-        eval_results = [] if sandbox_allowed else None
-        for m in EVAL_RE.finditer(reply_text):
-            code = m.group(1)
-            try:
-                eval_results.append(await ctx.tools.run_eval(user.id, code))
-            except Exception as exc:
-                eval_results.append(f"(Eval error: {type(exc).__name__})")
-
-        for res in eval_results:
+    for res in skill_results:
+        if not res.startswith("(Skill error:"):
+            await safe_send(bot, chat.id, f"✅ Loaded skill: {res}", ctx)
+        else:
             await safe_send(bot, chat.id, res, ctx)
 
-        # ---- skills (post-process) ----
-        skill_results = []
-        for m in SKILL_RE.finditer(reply_text):
-            skill_name = m.group(1).strip()
-            if not skill_name:
-                continue
-            try:
-                skill_content = await ctx.tools.read_skill(skill_name)
-            except Exception as exc:
-                skill_content = f"(Skill error: {type(exc).__name__})"
-            if skill_content.startswith("(Skill error:") or skill_content.startswith("(Skills are not configured.)"):
-                skill_results.append(skill_content)
-            else:
-                skill_results.append(skill_name)
-                raw = ctx.tools.skill_manager.read_skill(skill_name)
-                await ctx.memory.add_message(chat.id, "system", f"[SKILL: {skill_name}]\n{raw}\n[/END SKILL]")
+    # ---- file output (post-process) ----
+    send_file_ops = []
+    for m in SEND_FILE_RE.finditer(reply_text):
+        relpath = m.group(1).strip()
+        if relpath:
+            send_file_ops.append(relpath)
 
-        for res in skill_results:
-            if not res.startswith("(Skill error:"):
-                await safe_send(bot, chat.id, f"✅ Loaded skill: {res}", ctx)
-            else:
-                await safe_send(bot, chat.id, res, ctx)
+    for relpath in send_file_ops:
+        try:
+            if status_id:
+                await safe_edit(bot, chat.id, status_id, "🔍 Checking result...", ctx, parse_mode)
+            file_input = await ctx.tools.send_file(user.id, relpath)
+            if status_id:
+                await safe_edit(bot, chat.id, status_id, "📤 Sending file...", ctx, parse_mode)
+            await bot.send_document(chat.id, document=file_input, caption=f"📄 {relpath}")
+            if status_id:
+                await safe_edit(bot, chat.id, status_id, "✅ Done", ctx, parse_mode)
+        except Exception as exc:
+            await safe_send(bot, chat.id, f"(Send file error: {type(exc).__name__})", ctx)
 
-        # ---- file output (post-process) ----
-        send_file_ops = []
-        for m in SEND_FILE_RE.finditer(reply_text):
-            relpath = m.group(1).strip()
-            if relpath:
-                send_file_ops.append(relpath)
-
-        for relpath in send_file_ops:
-            try:
-                if status_id:
-                    await safe_edit(bot, chat.id, status_id, "🔍 Checking result...", ctx, parse_mode)
-                file_input = await ctx.tools.send_file(user.id, relpath)
-                if status_id:
-                    await safe_edit(bot, chat.id, status_id, "📤 Sending file...", ctx, parse_mode)
-                await bot.send_document(chat.id, document=file_input, caption=f"📄 {relpath}")
-                if status_id:
-                    await safe_edit(bot, chat.id, status_id, "✅ Done", ctx, parse_mode)
-            except Exception as exc:
-                await safe_send(bot, chat.id, f"(Send file error: {type(exc).__name__})", ctx)
-
-        if not final_text and (gifs or files or ws_ops or eval_results or skill_results or send_file_ops):
-            final_text = "✅ Here you go!"
+    if not final_text and (gifs or files or shell_results or skill_results or send_file_ops):
+        final_text = "✅ Here you go!"
 
     # If the reply was purely tool-based (no text left after stripping markers),
     # avoid sending an empty "…" placeholder. Just keep the side-effects (GIFs/files)
