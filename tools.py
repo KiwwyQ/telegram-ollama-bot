@@ -36,7 +36,7 @@ FILE_RE = re.compile(r"\[FILE:([^\]]+)\](.*?)\[/FILE\]", re.IGNORECASE | re.DOTA
 SEARCH_RE = re.compile(r"\[SEARCH:(.*?)\]", re.IGNORECASE)
 SKILL_RE = re.compile(r"\[SKILL:([^\]]+)\]", re.IGNORECASE)
 SEND_FILE_RE = re.compile(r"\[SEND_FILE:([^\]]+)\]", re.IGNORECASE)
-SHELL_RE = re.compile(r"\[SHELL\](.*?)\[/SHELL\]", re.IGNORECASE | re.DOTALL)
+SHELL_RE = re.compile(r"\[SHELL\](.*?)(?:\[/SHELL\]|(?=\n\n|\Z))", re.IGNORECASE | re.DOTALL)
 
 
 class Tools:
@@ -139,7 +139,7 @@ class Tools:
         blocked = [
             "sudo", "su ", "passwd", "shadow", "shutdown", "reboot",
             "mkfs", "fdisk", "dd if=", "kill -9", "iptables", "ufw ",
-            "chmod 777 /", "rm -rf /", "curl ", "wget ", "nc ", "ncat",
+            "chmod 777 /", "rm -rf /", "nc ", "ncat",
             "python -c", "perl -e", "ruby -e",
         ]
         for b in blocked:

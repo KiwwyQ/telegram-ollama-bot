@@ -705,11 +705,11 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
         content = f"(Replying to {ruser_name}: {replied_human_text})\n\n{content}"
     if has_photo and not content:
         content = "What is in this image?"
-    if has_document and document_text:
-        if document_text.startswith("(Document error:"):
+    if has_document:
+        if document_text:
             content = f"(Document: {document_filename})\n{document_text}\n\n{content}" if content else f"(Document: {document_filename})\n{document_text}"
         else:
-            content = f"(Document: {document_filename})\n{document_text}\n\n{content}" if content else f"(Document: {document_filename})\n{document_text}"
+            content = f"(Document: {document_filename})\n(empty or binary file - use shell to read raw bytes)\n\n{content}" if content else f"(Document: {document_filename})\n(empty or binary file - use shell to read raw bytes)"
 
     new_user_msg = {"role": "user", "content": content, "name": display_name}
     if images_b64:
@@ -1031,6 +1031,19 @@ async def _run_shell_loop(
                     pass
             result = await ctx.tools.do_shell(user_id, cmd)
             tool_results.append(f"$ {cmd}\n{result}")
+
+        for m in SKILL_RE.finditer(reply):
+            skill_name = m.group(1).strip()
+            if not skill_name:
+                continue
+            try:
+                skill_content = await ctx.tools.read_skill(skill_name)
+            except Exception:
+                skill_content = None
+            if skill_content and not skill_content.startswith("(Skill error:") and not skill_content.startswith("(Skills are not configured.)"):
+                raw = ctx.tools.skill_manager.read_skill(skill_name)
+                loop_messages.append({"role": "system", "content": f"[SKILL: {skill_name}]\n{raw}\n[/END SKILL]"})
+                tool_results.append(f"(Loaded skill: {skill_name})")
 
         if cancel_event.is_set():
             return "Stopped."

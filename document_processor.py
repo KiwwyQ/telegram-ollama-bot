@@ -163,24 +163,6 @@ def _read_xlsx(path: Path) -> str:
     return _truncate("\n".join(parts))
 
 
-def _read_pptx(path: Path) -> str:
-    try:
-        from pptx import Presentation
-    except ImportError as exc:
-        raise DocumentError("python-pptx is not installed. Use '# REQUIRE: python-pptx'.") from exc
-    prs = Presentation(str(path))
-    parts = []
-    for i, slide in enumerate(prs.slides):
-        texts = []
-        for shape in slide.shapes:
-            if hasattr(shape, "text") and shape.text.strip():
-                texts.append(shape.text.strip())
-        if texts:
-            parts.append(f"--- Slide {i + 1} ---\n" + "\n".join(texts))
-    text = "\n\n".join(parts)
-    return _truncate(text)
-
-
 def _read_zip(path: Path) -> str:
     with zipfile.ZipFile(path, "r") as zf:
         names = zf.namelist()
