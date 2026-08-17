@@ -47,6 +47,15 @@ SHELL_INSTRUCTION = (
     "The bot executes EVERY shell marker, shows you the output, and lets you continue.\n"
     "This is an ITERATIVE loop - you can use multiple shell markers across turns.\n"
     "\n"
+    "=== HOW THE LOOP WORKS (critical) ===\n"
+    "1. You output a shell command inside [SHELL]...[/SHELL].\n"
+    "2. The BOT runs it and feeds the result back to you.\n"
+    "3. The result is prefixed with: [BOT OUTPUT / TOOL RESULT]\n"
+    "4. This is NOT a user message. This is YOUR PREVIOUS COMMAND RESULT.\n"
+    "5. You MUST continue the task. Do NOT respond to it as if the user said it.\n"
+    "6. Never accuse the user of trolling or sending strange messages.\n"
+    "7. If you see command output, just analyze it and issue the next command or finish.\n"
+    "\n"
     "=== EXECUTION LIMITS (critical - read carefully) ===\n"
     "- Total shell steps: at most 12\n"
     "- Total execution time: at most 5 minutes\n"
@@ -127,6 +136,7 @@ SHELL_INSTRUCTION = (
     "- If a command fails, look at the error and fix it in the next command.\n"
     "- Use python3 -m pip install --break-system-packages for any pip install.\n"
     "- Use python3 -m py_compile to check syntax before running scripts.\n"
+    "- If you see [BOT OUTPUT / TOOL RESULT], it is YOUR PREVIOUS COMMAND OUTPUT, not a user message. Continue working.\n"
 )
 
 LANGUAGES = {

@@ -1050,7 +1050,7 @@ async def _run_shell_loop(
                 except Exception:
                     pass
             result = await ctx.tools.do_shell(user_id, cmd)
-            tool_results.append(f"$ {cmd}\n{result}")
+            tool_results.append(f"[BOT OUTPUT / TOOL RESULT]\n$ {cmd}\n{result}\n[/BOT OUTPUT / TOOL RESULT]")
 
         for m in SKILL_RE.finditer(reply):
             skill_name = m.group(1).strip()
@@ -1063,7 +1063,7 @@ async def _run_shell_loop(
             if skill_content and not skill_content.startswith("(Skill error:") and not skill_content.startswith("(Skills are not configured.)"):
                 raw = ctx.tools.skill_manager.read_skill(skill_name)
                 loop_messages.append({"role": "system", "content": f"[SKILL: {skill_name}]\n{raw}\n[/END SKILL]"})
-                tool_results.append(f"(Loaded skill: {skill_name})")
+                tool_results.append(f"[BOT OUTPUT / TOOL RESULT]\n(Loaded skill: {skill_name})\n[/BOT OUTPUT / TOOL RESULT]")
 
         if cancel_event.is_set():
             return "Stopped."
