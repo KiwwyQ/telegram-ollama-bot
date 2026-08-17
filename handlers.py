@@ -532,6 +532,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_username = ctx.config.BOT_USERNAME
 
     text = (message.text or message.caption or "").strip()
+    # Detect photos from current message or replied message.
     has_photo = bool(message.photo)
     if not has_photo and message.document and message.document.mime_type and message.document.mime_type.startswith("image/"):
         has_photo = True
@@ -555,6 +556,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     triggered = False
     replied_to_bot = False
     replied_human_text = None
+    replied_to_name = "User"
 
     rtm = message.reply_to_message
     if rtm:
@@ -562,9 +564,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if ruser and ruser.is_bot and (ruser.username == bot_username):
             triggered = True
             replied_to_bot = True
-        elif _mention(text, bot_username):
+        if _mention(text, bot_username):
             triggered = True
-            replied_human_text = (rtm.text or rtm.caption or "")
+        replied_human_text = (rtm.text or rtm.caption or "")
+        replied_to_name = _display_name(ruser) if ruser else "User"
+        if not has_photo and rtm.photo:
+            has_photo = True
+        elif not has_photo and rtm.document and rtm.document.mime_type and rtm.document.mime_type.startswith("image/"):
+            has_photo = True
 
     if not triggered and is_private:
         triggered = True
@@ -625,10 +632,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         document_text = f"(Document error: {exc})"
             except Exception as exc:
                 document_text = f"(Document error: {type(exc).__name__})"
-        await _generate(update, context, ctx, text, has_photo, replied_human_text, api_key, user_rec, has_document=has_document, document_text=document_text, document_filename=document_filename)
+        await _generate(update, context, ctx, text, has_photo, replied_human_text, api_key, user_rec, has_document=has_document, document_text=document_text, document_filename=document_filename, replied_to_name=replied_to_name)
 
 
-async def _generate(update, context, ctx, text, has_photo, replied_human_text, api_key, user_rec, has_document=False, document_text="", document_filename=""):
+async def _generate(update, context, ctx, text, has_photo, replied_human_text, api_key, user_rec, has_document=False, document_text="", document_filename="", replied_to_name="User"):
     chat = update.effective_chat
     user = update.effective_user
     is_private = chat.type == "private"
@@ -684,8 +691,7 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
     # Build the new user message content (with replied context).
     content = text
     if replied_human_text:
-        ruser_name = _display_name(ruser) if ruser else "User"
-        content = f"(Replying to {ruser_name}: {replied_human_text})\n\n{content}"
+        content = f"(Replying to {replied_to_name}: {replied_human_text})\n\n{content}" if content else f"(Replying to {replied_to_name}: {replied_human_text})"
     if has_photo and not content:
         content = "What is in this image?"
     if has_document and document_text:
@@ -719,6 +725,8 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
     # ---- generation with tool loop ----
     reply_text = ""
     try:
+        search_count = 0
+        max_searches = 3
         for attempt in range(4):
             if ctx.config.STREAM_RESPONSES:
                 reply_text = await _stream_and_edit(bot, chat.id, status_id, ctx, api_key, model, full, parse_mode, is_group=not is_private)
@@ -726,16 +734,21 @@ async def _generate(update, context, ctx, text, has_photo, replied_human_text, a
                 reply_text = await ctx.ollama.chat(api_key, model, full, stream=False)
             # Tool: web search.
             searches = ctx.tools.extract_search_queries(reply_text)
-            if searches and attempt < 3:
-                for q in searches[:3]:
+            if searches and attempt < 3 and search_count < max_searches:
+                remaining = max_searches - search_count
+                for q in searches[:remaining]:
                     try:
                         ctx.logger.info("web search: %s", q)
                         res = await ctx.tools.do_web_search(api_key, q)
                         full.append({"role": "user", "content": f"[Web search results for '{q}']:\n{res}"})
+                        search_count += 1
                     except (RateLimitError, AuthError, OllamaError) as e:
                         # Surface limit errors immediately and stop.
                         await _finalize_error(bot, chat.id, status_id, ctx, e, parse_mode, model=model)
                         return
+                if search_count >= max_searches:
+                    reply_text = SEARCH_RE.sub("", reply_text)
+                    break
                 continue  # re-ask model with search results
             break
     except RateLimitError:
@@ -892,6 +905,12 @@ def message_image_file(update):
         return message.photo[-1].file_id
     if message.document and message.document.mime_type and message.document.mime_type.startswith("image/"):
         return message.document.file_id
+    rtm = message.reply_to_message
+    if rtm:
+        if rtm.photo:
+            return rtm.photo[-1].file_id
+        if rtm.document and rtm.document.mime_type and rtm.document.mime_type.startswith("image/"):
+            return rtm.document.file_id
     raise ValueError("no image file available")
 
 

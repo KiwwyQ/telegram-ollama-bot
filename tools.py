@@ -36,7 +36,7 @@ FILE_RE = re.compile(r"\[FILE:([^\]]+)\](.*?)\[/FILE\]", re.IGNORECASE | re.DOTA
 SEARCH_RE = re.compile(r"\[SEARCH:(.*?)\]", re.IGNORECASE)
 SKILL_RE = re.compile(r"\[SKILL:([^\]]+)\]", re.IGNORECASE)
 SEND_FILE_RE = re.compile(r"\[SEND_FILE:([^\]]+)\]", re.IGNORECASE)
-SHELL_RE = re.compile(r"\[SHELL\](.*?)\[/SHELL\]", re.IGNORECASE | re.DOTALL)
+SHELL_RE = re.compile(r"\[SHELL\](.*?)(?:\[/SHELL\]|(?=\n\n|\Z))", re.IGNORECASE | re.DOTALL)
 
 
 class Tools:
@@ -145,6 +145,11 @@ class Tools:
         for b in blocked:
             if b in lower:
                 return f"(Shell error: command blocked for security: {b.strip()})"
+        if "pip install" in lower and "--break-system-packages" not in lower:
+            if "python" in lower and "-m pip" in lower:
+                cmd = cmd.replace("-m pip install", "-m pip install --break-system-packages", 1)
+            else:
+                cmd = cmd.replace("pip install", "pip install --break-system-packages", 1)
         cwd = None
         if self.workspace:
             try:
