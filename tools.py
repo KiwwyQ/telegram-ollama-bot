@@ -139,8 +139,8 @@ class Tools:
         blocked = [
             "sudo", "su ", "passwd", "shadow", "shutdown", "reboot",
             "mkfs", "fdisk", "dd if=", "kill -9", "iptables", "ufw ",
-            "chmod 777 /", "rm -rf /", "nc ", "ncat",
-            "python -c", "perl -e", "ruby -e",
+            "chmod 777 /", "rm -rf /",
+            "nc ", "ncat",
         ]
         for b in blocked:
             if b in lower:
